@@ -21,9 +21,16 @@ public final class PriceHistoryService {
     private final SubscriptionDao subscriptionDao;
 
     public PriceHistoryService(Connection connection) {
+        this(connection, new PriceHistoryDao(connection), new SubscriptionDao(connection));
+    }
+
+    public PriceHistoryService(
+            Connection connection,
+            PriceHistoryDao priceHistoryDao,
+            SubscriptionDao subscriptionDao) {
         this.connection = Objects.requireNonNull(connection, "connection must not be null");
-        this.priceHistoryDao = new PriceHistoryDao(connection);
-        this.subscriptionDao = new SubscriptionDao(connection);
+        this.priceHistoryDao = Objects.requireNonNull(priceHistoryDao, "priceHistoryDao must not be null");
+        this.subscriptionDao = Objects.requireNonNull(subscriptionDao, "subscriptionDao must not be null");
     }
 
     public PriceHistory recordPriceChange(
