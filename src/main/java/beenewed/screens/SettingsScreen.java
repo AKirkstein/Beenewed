@@ -10,7 +10,7 @@ import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
 
-/** S6 \u2014 Settings & Preferences (saved locally with java.util.prefs). */
+/** S6 \u2014 Settings & Preferences (synced with Supabase user preferences). */
 public class SettingsScreen extends JPanel {
     private static final String[] WINDOWS = {"3 Days Before", "7 Days Before", "14 Days Before", "30 Days Before"};
     private static final int[] WINDOW_DAYS = {3, 7, 14, 30};
@@ -21,7 +21,8 @@ public class SettingsScreen extends JPanel {
     private final JLabel toggleLabel = UI.label("Enabled", Theme.BODY_B, Theme.TEXT);
     private final JLabel reminderHint = UI.label("", Theme.SMALL, Theme.MUTED);
     private final UI.Btn viewReminders = UI.ghost("View Reminders", Icons.Type.BELL);
-    private final JLabel savedMsg = UI.label("Preferences are saved locally.", Theme.SMALL, Theme.MUTED);
+    private final JLabel savedMsg = UI.label("Preferences are synced to your account.", Theme.SMALL, Theme.MUTED);
+    private final JLabel accountEmailLabel = UI.label("", Theme.SMALL, Theme.TEXT);
 
     public SettingsScreen() {
         super(new BorderLayout());
@@ -66,6 +67,21 @@ public class SettingsScreen extends JPanel {
                 setting("Renewal Reminders", "Open the reminders dialog to review approaching or overdue items.", UI.vstack(6, viewReminders, reminderHint), true)
         ), BorderLayout.CENTER);
 
+        // Account
+        UI.RoundPanel account = UI.card(new BorderLayout(), 16);
+        account.add(sectionHead(Icons.Type.USER, "Account", "Manage your active Supabase session."), BorderLayout.NORTH);
+        UI.RoundPanel emailBadge = new UI.RoundPanel(new BorderLayout(8, 0), 8, Theme.SUBTLE, null);
+        emailBadge.setBorder(new EmptyBorder(8, 10, 8, 10));
+        emailBadge.add(new JLabel(Icons.of(Icons.Type.USER, 14, Theme.ACCENT)), BorderLayout.WEST);
+        emailBadge.add(accountEmailLabel, BorderLayout.CENTER);
+        UI.Btn logOutBtn = new UI.Btn("Log Out", Icons.Type.EXTERNAL, UI.Kind.DANGER);
+        logOutBtn.addActionListener(e -> App.get().logout());
+        JPanel logOutRow = UI.clear(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        logOutRow.add(logOutBtn);
+        account.add(UI.vstack(0,
+                setting("Signed-In Account", "Your subscriptions, payments, and preferences are synced to this Supabase account.", UI.vstack(8, emailBadge, logOutRow), false)
+        ), BorderLayout.CENTER);
+
         // Footer bar
         UI.Btn discard = UI.ghost("Discard Changes", null);
         discard.addActionListener(e -> refresh());
@@ -86,7 +102,7 @@ public class SettingsScreen extends JPanel {
         bar.add(UI.hrow(10, discard, save), BorderLayout.EAST);
 
         JComponent header = Common.pageHeader("Settings & Preferences", "Manage application settings and renewal reminder preferences.", null);
-        JPanel body = UI.vstack(16, header, general, reminders, bar);
+        JPanel body = UI.vstack(16, header, general, reminders, bar, account);
         body.setMaximumSize(new Dimension(760, Integer.MAX_VALUE));
         JPanel center = new JPanel(null) {
             { setOpaque(false); }
@@ -149,7 +165,10 @@ public class SettingsScreen extends JPanel {
         int n = st.upcomingReminders().size() + (st.showOverdue ? st.overdue().size() : 0);
         viewReminders.setText("View Reminders (" + n + ")");
         reminderHint.setText("<html>Opens reminder dialog: " + st.upcomingReminders().size() + " upcoming renewal" + (st.upcomingReminders().size() == 1 ? "" : "s") + " within " + st.remindDays + " days.</html>");
-        savedMsg.setText("Preferences are saved locally.");
+        savedMsg.setText("Preferences are synced to your account.");
         savedMsg.setForeground(Theme.MUTED);
+        if (App.get() != null) {
+            accountEmailLabel.setText(App.get().getCurrentUserEmail());
+        }
     }
 }

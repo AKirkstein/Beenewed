@@ -2,13 +2,13 @@ package beenewed.model;
 
 import beenewed.model.Models.*;
 import beenewed.ui.Icons;
-import com.beenewed.backend.BackendContext;
 import com.beenewed.backend.exception.NotFoundException;
 import com.beenewed.backend.exception.ValidationException;
+import com.beenewed.supabase.SupabaseException;
+import com.beenewed.supabase.SupabaseRestClient;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.Year;
 import java.time.YearMonth;
@@ -20,18 +20,22 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 
-/** UI-facing model adapter backed by the application's SQLite services. */
+/** UI-facing model adapter backed by Supabase PostgREST services. */
 public final class Store {
     private static Store instance;
 
-    public static synchronized Store initialize(BackendContext backend) throws SQLException {
-        instance = new Store(backend);
+    public static synchronized Store initialize(SupabaseRestClient supabase) {
+        instance = new Store(supabase);
         return instance;
+    }
+
+    public static synchronized void reset() {
+        instance = null;
     }
 
     public static Store get() {
         if (instance == null) {
-            throw new IllegalStateException("Store must be initialized with BackendContext before use");
+            throw new IllegalStateException("Store must be initialized with SupabaseRestClient before use");
         }
         return instance;
     }
@@ -54,11 +58,11 @@ public final class Store {
     public int remindDays = 7;
     public boolean showOverdue = true;
 
-    private final BackendContext backend;
+    private final SupabaseRestClient supabase;
     private final List<Runnable> listeners = new ArrayList<>();
 
-    private Store(BackendContext backend) throws SQLException {
-        this.backend = Objects.requireNonNull(backend, "backend must not be null");
+    private Store(SupabaseRestClient supabase) {
+        this.supabase = Objects.requireNonNull(supabase, "supabase must not be null");
         reload();
     }
 
@@ -78,15 +82,15 @@ public final class Store {
     }
 
     public void addSubscription(Subscription subscription) {
-        withBackend(() -> backend.getSubscriptionService().create(toBackendSubscription(subscription, null)));
+        withBackend(() -> supabase.createSubscription(toBackendSubscription(subscription, null)));
     }
 
     public void updateSubscription(Subscription subscription) {
-        withBackend(() -> backend.getSubscriptionService().update(toBackendSubscription(subscription, subscription.id)));
+        withBackend(() -> supabase.updateSubscription(toBackendSubscription(subscription, subscription.id)));
     }
 
     public void deleteSubscription(Subscription subscription) {
-        withBackend(() -> backend.getSubscriptionService().delete((long) subscription.id));
+        withBackend(() -> supabase.deleteSubscription((long) subscription.id));
     }
 
     public void changeStatus(Subscription subscription, Status status) {
@@ -94,78 +98,78 @@ public final class Store {
         withBackend(() -> {
             long id = subscription.id;
             switch (status) {
-                case ACTIVE -> backend.getSubscriptionService().reactivate(id);
-                case PAUSED -> backend.getSubscriptionService().pause(id);
-                case CANCELLED -> backend.getSubscriptionService().cancel(id);
+                case ACTIVE -> supabase.reactivateSubscription(id, null);
+                case PAUSED -> supabase.pauseSubscription(id);
+                case CANCELLED -> supabase.cancelSubscription(id);
             }
             return null;
         });
     }
 
     public void recordPayment(Payment payment) {
-        withBackend(() -> backend.getPaymentService().recordPayment(toBackendPayment(payment, null)));
+        withBackend(() -> supabase.recordPayment(toBackendPayment(payment, null)));
     }
 
     public void updatePayment(Payment payment) {
-        withBackend(() -> backend.getPaymentService().updatePayment(toBackendPayment(payment, payment.id)));
+        withBackend(() -> supabase.updatePayment(toBackendPayment(payment, payment.id)));
     }
 
     public void deletePayment(Payment payment) {
-        withBackend(() -> backend.getPaymentService().deletePayment((long) payment.id));
+        withBackend(() -> supabase.deletePayment((long) payment.id));
     }
 
     public void addMember(Member member) {
-        withBackend(() -> backend.getMemberService().addMember(
+        withBackend(() -> supabase.addMember(
                 (long) member.sub.id,
                 toBackendMember(member, null)));
     }
 
     public void updateMember(Member member) {
-        withBackend(() -> backend.getMemberService().updateMember(
+        withBackend(() -> supabase.updateMember(
                 (long) member.sub.id,
                 toBackendMember(member, member.id)));
     }
 
     public void deleteMember(Member member) {
-        withBackend(() -> backend.getMemberService().deleteMember((long) member.sub.id, (long) member.id));
+        withBackend(() -> supabase.deleteMember((long) member.sub.id, (long) member.id));
     }
 
     public void recordContribution(Contribution contribution) {
-        withBackend(() -> backend.getContributionService().recordContribution(
+        withBackend(() -> supabase.recordContribution(
                 (long) contribution.payment.id,
                 toBackendContribution(contribution, null)));
     }
 
     public void updateContribution(Contribution contribution) {
-        withBackend(() -> backend.getContributionService().updateContribution(
+        withBackend(() -> supabase.updateContribution(
                 (long) contribution.payment.id,
                 toBackendContribution(contribution, contribution.id)));
     }
 
     public void deleteContribution(Contribution contribution) {
-        withBackend(() -> backend.getContributionService().deleteContribution(
+        withBackend(() -> supabase.deleteContribution(
                 (long) contribution.payment.id,
                 (long) contribution.id));
     }
 
     public void addUsage(Usage usage) {
-        withBackend(() -> backend.getUsageLogService().addUsageLog(
+        withBackend(() -> supabase.addUsageLog(
                 (long) usage.sub.id,
                 toBackendUsage(usage, null)));
     }
 
     public void updateUsage(Usage usage) {
-        withBackend(() -> backend.getUsageLogService().updateUsageLog(
+        withBackend(() -> supabase.updateUsageLog(
                 (long) usage.sub.id,
                 toBackendUsage(usage, usage.id)));
     }
 
     public void deleteUsage(Usage usage) {
-        withBackend(() -> backend.getUsageLogService().deleteUsageLog((long) usage.sub.id, (long) usage.id));
+        withBackend(() -> supabase.deleteUsageLog((long) usage.sub.id, (long) usage.id));
     }
 
     public void recordPriceChange(Subscription subscription, LocalDate date, double newPrice, String reason) {
-        withBackend(() -> backend.getPriceHistoryService().recordPriceChange(
+        withBackend(() -> supabase.recordPriceChange(
                 (long) subscription.id,
                 money(newPrice),
                 date,
@@ -174,8 +178,8 @@ public final class Store {
 
     public void savePrefs(int days, boolean overdue) {
         withBackend(() -> {
-            com.beenewed.backend.model.AppPreferences current = backend.getAppPreferencesService().get();
-            backend.getAppPreferencesService().update(new com.beenewed.backend.model.AppPreferences(
+            com.beenewed.backend.model.AppPreferences current = supabase.getPreferences();
+            supabase.updatePreferences(new com.beenewed.backend.model.AppPreferences(
                     1L,
                     current.currency(),
                     current.theme(),
@@ -188,13 +192,13 @@ public final class Store {
     }
 
     public com.beenewed.backend.model.Theme getTheme() {
-        return withBackend(() -> backend.getAppPreferencesService().get().theme());
+        return withBackend(() -> supabase.getPreferences().theme());
     }
 
     public void saveTheme(boolean dark) {
         withBackend(() -> {
-            com.beenewed.backend.model.AppPreferences current = backend.getAppPreferencesService().get();
-            backend.getAppPreferencesService().update(new com.beenewed.backend.model.AppPreferences(
+            com.beenewed.backend.model.AppPreferences current = supabase.getPreferences();
+            supabase.updatePreferences(new com.beenewed.backend.model.AppPreferences(
                     1L,
                     current.currency(),
                     dark
@@ -215,7 +219,7 @@ public final class Store {
             String normalizedSearch = normalize(search);
 
             List<Subscription> result = mapSubscriptionsAndCache(
-                    backend.getSubscriptionService().findFiltered(
+                    supabase.findFilteredSubscriptions(
                             normalizedSearch,
                             normalizedCategory,
                             backendStatus));
@@ -236,8 +240,7 @@ public final class Store {
             com.beenewed.backend.model.SubscriptionStatus backendStatus = status == null
                     ? null
                     : com.beenewed.backend.model.SubscriptionStatus.valueOf(status.name());
-            return mapSubscriptionsAndCache(backend.getSubscriptionService()
-                    .findByRenewalDateRange(startDate, endDate, backendStatus));
+            return mapSubscriptionsAndCache(supabase.findSubscriptionsByRenewalRange(startDate, endDate, backendStatus));
         });
     }
 
@@ -256,7 +259,7 @@ public final class Store {
             com.beenewed.backend.model.SubscriptionStatus backendStatus = subscriptionStatus == null
                     ? null
                     : com.beenewed.backend.model.SubscriptionStatus.valueOf(subscriptionStatus.name());
-            List<com.beenewed.backend.model.Payment> records = backend.getPaymentService().findFiltered(
+            List<com.beenewed.backend.model.Payment> records = supabase.findFilteredPayments(
                     null,
                     startDate,
                     endDate,
@@ -268,30 +271,30 @@ public final class Store {
 
     public List<Payment> findPayments(LocalDate startDate, LocalDate endDate) {
         return withBackend(() ->
-                mapPaymentsAndCache(backend.getPaymentService().findByDateRange(startDate, endDate)));
+                mapPaymentsAndCache(supabase.findPaymentsByDateRange(startDate, endDate)));
     }
 
     public List<Payment> paymentsNewestFirst() {
-        return withBackend(() -> mapPaymentsAndCache(backend.getPaymentService().findAll()));
+        return withBackend(() -> mapPaymentsAndCache(supabase.findAllPayments()));
     }
 
     public List<Payment> paymentsFor(Subscription subscription) {
         return withBackend(() -> mapPaymentsAndCache(
-                backend.getPaymentService().findBySubscriptionId((long) subscription.id)));
+                supabase.findPaymentsBySubscriptionId((long) subscription.id)));
     }
 
     public List<Member> membersFor(Subscription subscription) {
         return withBackend(() -> mapMembersAndCache(
-                backend.getMemberService().findBySubscriptionId((long) subscription.id)));
+                supabase.findMembersBySubscriptionId((long) subscription.id)));
     }
 
     public List<Contribution> contributionsFor(Subscription subscription) {
         return withBackend(() -> {
             List<Contribution> result = new ArrayList<>();
             for (com.beenewed.backend.model.Payment payment :
-                    backend.getPaymentService().findBySubscriptionId((long) subscription.id)) {
+                    supabase.findPaymentsBySubscriptionId((long) subscription.id)) {
                 result.addAll(mapContributionsAndCache(
-                        backend.getContributionService().findByPaymentId(payment.id())));
+                        supabase.findContributionsByPaymentId(payment.id())));
             }
             result.sort(Comparator.comparing(contribution -> contribution.date));
             return result;
@@ -300,12 +303,12 @@ public final class Store {
 
     public List<Usage> usagesFor(Subscription subscription) {
         return withBackend(() -> mapUsagesAndCache(
-                backend.getUsageLogService().findBySubscriptionId((long) subscription.id)));
+                supabase.findUsageLogsBySubscriptionId((long) subscription.id)));
     }
 
     public List<PriceChange> priceChangesFor(Subscription subscription) {
         return withBackend(() -> mapPriceChangesAndCache(
-                backend.getPriceHistoryService().findBySubscriptionId((long) subscription.id)));
+                supabase.findPriceHistoryBySubscriptionId((long) subscription.id)));
     }
 
     public double monthlyTotal() {
@@ -317,7 +320,7 @@ public final class Store {
     }
 
     public com.beenewed.backend.services.DashboardService.DashboardSummary dashboardSummary() {
-        return withBackend(() -> backend.getDashboardService().getSummary());
+        return withBackend(supabase::getDashboardSummary);
     }
 
     public List<Subscription> upcomingReminders() {
@@ -341,29 +344,27 @@ public final class Store {
     public com.beenewed.backend.services.ReportService.ActualPaidReport actualPaidForRange(
             LocalDate startDate,
             LocalDate endDate) {
-        return withBackend(() ->
-                backend.getReportService().actualPaidForRange(startDate, endDate));
+        return withBackend(() -> supabase.actualPaidForRange(startDate, endDate));
     }
 
     public com.beenewed.backend.services.ReportService.ActualPaidReport actualPaidForMonth(YearMonth month) {
-        return withBackend(() -> backend.getReportService().actualPaidForMonth(month));
+        return withBackend(() -> supabase.actualPaidForMonth(month));
     }
 
     public com.beenewed.backend.services.ReportService.ActualPaidReport actualPaidForYear(Year year) {
-        return withBackend(() -> backend.getReportService().actualPaidForYear(year));
+        return withBackend(() -> supabase.actualPaidForYear(year));
     }
 
     public com.beenewed.backend.services.ReportService.EstimatedRecurringReport estimatedRecurringCost() {
-        return withBackend(() -> backend.getReportService().currentEstimatedRecurringCost());
+        return withBackend(supabase::currentEstimatedRecurringCost);
     }
 
     public BigDecimal allTimeActualPaid() {
-        return withBackend(() -> backend.getReportService().allTimeActualPaid());
+        return withBackend(supabase::allTimeActualPaid);
     }
 
     public Subscription getSubscription(int id) {
-        return withBackend(() ->
-                mapSubscriptionAndCache(backend.getSubscriptionService().getById((long) id)));
+        return withBackend(() -> mapSubscriptionAndCache(supabase.getSubscriptionById((long) id)));
     }
 
     public boolean containsSubscription(Subscription subscription) {
@@ -377,31 +378,24 @@ public final class Store {
 
     private List<Subscription> reminders(
             List<com.beenewed.backend.services.DashboardService.RenewalReminder> reminders) {
+        Map<Integer, Subscription> cached = indexSubscriptions();
         List<Subscription> result = new ArrayList<>();
         for (com.beenewed.backend.services.DashboardService.RenewalReminder reminder : reminders) {
-            result.add(getSubscription(Math.toIntExact(reminder.subscriptionId())));
+            int id = Math.toIntExact(reminder.subscriptionId());
+            Subscription sub = cached.get(id);
+            result.add(sub != null ? sub : getSubscription(id));
         }
         return result;
     }
 
-    private void reload() throws SQLException {
-        List<com.beenewed.backend.model.Subscription> subscriptionRecords =
-                backend.getSubscriptionService().findAll();
-        List<com.beenewed.backend.model.Payment> paymentRecords = backend.getPaymentService().findAll();
-        List<com.beenewed.backend.model.Member> memberRecords = new ArrayList<>();
-        List<com.beenewed.backend.model.Contribution> contributionRecords = new ArrayList<>();
-        List<com.beenewed.backend.model.UsageLog> usageRecords = new ArrayList<>();
-        List<com.beenewed.backend.model.PriceHistory> priceRecords = new ArrayList<>();
-
-        for (com.beenewed.backend.model.Subscription subscription : subscriptionRecords) {
-            memberRecords.addAll(backend.getMemberService().findBySubscriptionId(subscription.id()));
-            usageRecords.addAll(backend.getUsageLogService().findBySubscriptionId(subscription.id()));
-            priceRecords.addAll(backend.getPriceHistoryService().findBySubscriptionId(subscription.id()));
-        }
-        for (com.beenewed.backend.model.Payment payment : paymentRecords) {
-            contributionRecords.addAll(backend.getContributionService().findByPaymentId(payment.id()));
-        }
-        com.beenewed.backend.model.AppPreferences preferences = backend.getAppPreferencesService().get();
+    private void reload() {
+        List<com.beenewed.backend.model.Subscription> subscriptionRecords = supabase.findAllSubscriptions();
+        List<com.beenewed.backend.model.Payment> paymentRecords = supabase.findAllPayments();
+        List<com.beenewed.backend.model.Member> memberRecords = supabase.findAllMembers();
+        List<com.beenewed.backend.model.Contribution> contributionRecords = supabase.findAllContributions();
+        List<com.beenewed.backend.model.UsageLog> usageRecords = supabase.findAllUsageLogs();
+        List<com.beenewed.backend.model.PriceHistory> priceRecords = supabase.findAllPriceHistory();
+        com.beenewed.backend.model.AppPreferences preferences = supabase.getPreferences();
 
         Map<Integer, Subscription> oldSubscriptions = indexSubscriptions();
         List<Subscription> loadedSubscriptions = mapSubscriptions(subscriptionRecords, oldSubscriptions);
@@ -473,14 +467,14 @@ public final class Store {
         return result;
     }
 
-    private List<Payment> mapPayments(List<com.beenewed.backend.model.Payment> records) throws SQLException {
+    private List<Payment> mapPayments(List<com.beenewed.backend.model.Payment> records) {
         return mapPayments(records, indexSubscriptions(), index(payments, payment -> payment.id));
     }
 
     private List<Payment> mapPayments(
             List<com.beenewed.backend.model.Payment> records,
             Map<Integer, Subscription> subscriptionsById,
-            Map<Integer, Payment> existing) throws SQLException {
+            Map<Integer, Payment> existing) {
         List<Payment> result = new ArrayList<>();
         for (com.beenewed.backend.model.Payment record : records) {
             int id = Math.toIntExact(record.id());
@@ -509,14 +503,14 @@ public final class Store {
         return result;
     }
 
-    private List<Member> mapMembers(List<com.beenewed.backend.model.Member> records) throws SQLException {
+    private List<Member> mapMembers(List<com.beenewed.backend.model.Member> records) {
         return mapMembers(records, indexSubscriptions(), index(members, member -> member.id));
     }
 
     private List<Member> mapMembers(
             List<com.beenewed.backend.model.Member> records,
             Map<Integer, Subscription> subscriptionsById,
-            Map<Integer, Member> existing) throws SQLException {
+            Map<Integer, Member> existing) {
         List<Member> result = new ArrayList<>();
         for (com.beenewed.backend.model.Member record : records) {
             int id = Math.toIntExact(record.id());
@@ -536,7 +530,7 @@ public final class Store {
     }
 
     private List<Contribution> mapContributions(
-            List<com.beenewed.backend.model.Contribution> records) throws SQLException {
+            List<com.beenewed.backend.model.Contribution> records) {
         return mapContributions(
                 records,
                 indexSubscriptions(),
@@ -550,7 +544,7 @@ public final class Store {
             Map<Integer, Subscription> subscriptionsById,
             Map<Integer, Member> membersById,
             Map<Integer, Payment> paymentsById,
-            Map<Integer, Contribution> existing) throws SQLException {
+            Map<Integer, Contribution> existing) {
         List<Contribution> result = new ArrayList<>();
         for (com.beenewed.backend.model.Contribution record : records) {
             int id = Math.toIntExact(record.id());
@@ -583,14 +577,14 @@ public final class Store {
         return result;
     }
 
-    private List<Usage> mapUsages(List<com.beenewed.backend.model.UsageLog> records) throws SQLException {
+    private List<Usage> mapUsages(List<com.beenewed.backend.model.UsageLog> records) {
         return mapUsages(records, indexSubscriptions(), index(usages, usage -> usage.id));
     }
 
     private List<Usage> mapUsages(
             List<com.beenewed.backend.model.UsageLog> records,
             Map<Integer, Subscription> subscriptionsById,
-            Map<Integer, Usage> existing) throws SQLException {
+            Map<Integer, Usage> existing) {
         List<Usage> result = new ArrayList<>();
         for (com.beenewed.backend.model.UsageLog record : records) {
             int id = Math.toIntExact(record.id());
@@ -618,14 +612,14 @@ public final class Store {
     }
 
     private List<PriceChange> mapPriceChanges(
-            List<com.beenewed.backend.model.PriceHistory> records) throws SQLException {
+            List<com.beenewed.backend.model.PriceHistory> records) {
         return mapPriceChanges(records, indexSubscriptions(), index(priceChanges, price -> price.id));
     }
 
     private List<PriceChange> mapPriceChanges(
             List<com.beenewed.backend.model.PriceHistory> records,
             Map<Integer, Subscription> subscriptionsById,
-            Map<Integer, PriceChange> existing) throws SQLException {
+            Map<Integer, PriceChange> existing) {
         List<PriceChange> result = new ArrayList<>();
         for (com.beenewed.backend.model.PriceHistory record : records) {
             int id = Math.toIntExact(record.id());
@@ -673,7 +667,7 @@ public final class Store {
     }
 
     private List<Payment> mapPaymentsAndCache(
-            List<com.beenewed.backend.model.Payment> records) throws SQLException {
+            List<com.beenewed.backend.model.Payment> records) {
         List<Payment> result = mapPayments(records);
         for (Payment payment : result) {
             if (payments.stream().noneMatch(existing -> existing.id == payment.id)) {
@@ -683,7 +677,7 @@ public final class Store {
         return result;
     }
 
-    private List<Member> mapMembersAndCache(List<com.beenewed.backend.model.Member> records) throws SQLException {
+    private List<Member> mapMembersAndCache(List<com.beenewed.backend.model.Member> records) {
         List<Member> result = mapMembers(records);
         for (Member member : result) {
             if (members.stream().noneMatch(existing -> existing.id == member.id)) {
@@ -694,7 +688,7 @@ public final class Store {
     }
 
     private List<Contribution> mapContributionsAndCache(
-            List<com.beenewed.backend.model.Contribution> records) throws SQLException {
+            List<com.beenewed.backend.model.Contribution> records) {
         List<Contribution> result = mapContributions(records);
         for (Contribution contribution : result) {
             if (contributions.stream().noneMatch(existing -> existing.id == contribution.id)) {
@@ -704,7 +698,7 @@ public final class Store {
         return result;
     }
 
-    private List<Usage> mapUsagesAndCache(List<com.beenewed.backend.model.UsageLog> records) throws SQLException {
+    private List<Usage> mapUsagesAndCache(List<com.beenewed.backend.model.UsageLog> records) {
         List<Usage> result = mapUsages(records);
         for (Usage usage : result) {
             if (usages.stream().noneMatch(existing -> existing.id == usage.id)) {
@@ -715,7 +709,7 @@ public final class Store {
     }
 
     private List<PriceChange> mapPriceChangesAndCache(
-            List<com.beenewed.backend.model.PriceHistory> records) throws SQLException {
+            List<com.beenewed.backend.model.PriceHistory> records) {
         List<PriceChange> result = mapPriceChanges(records);
         for (PriceChange price : result) {
             if (priceChanges.stream().noneMatch(existing -> existing.id == price.id)) {
@@ -737,16 +731,9 @@ public final class Store {
         return indexed;
     }
 
-    private static Subscription requireMapped(Subscription value, String description) throws SQLException {
+    private static <T> T requireMapped(T value, String description) {
         if (value == null) {
-            throw new SQLException(description + " is missing while mapping backend records");
-        }
-        return value;
-    }
-
-    private static <T> T requireMapped(T value, String description) throws SQLException {
-        if (value == null) {
-            throw new SQLException(description + " is missing while mapping backend records");
+            throw new SupabaseException(description + " is missing while mapping backend records");
         }
         return value;
     }
@@ -839,17 +826,17 @@ public final class Store {
         current.addAll(replacement);
     }
 
-    private <T> T withBackend(SqlOperation<T> operation) {
+    private <T> T withBackend(BackendOperation<T> operation) {
         try {
             return operation.run();
-        } catch (SQLException exception) {
+        } catch (SupabaseException exception) {
             throw new BackendAccessException(exception);
         }
     }
 
     @FunctionalInterface
-    private interface SqlOperation<T> {
-        T run() throws SQLException;
+    private interface BackendOperation<T> {
+        T run();
     }
 
     @FunctionalInterface
@@ -858,8 +845,8 @@ public final class Store {
     }
 
     public static final class BackendAccessException extends RuntimeException {
-        public BackendAccessException(SQLException cause) {
-            super("A backend database operation failed: " + cause.getMessage(), cause);
+        public BackendAccessException(Throwable cause) {
+            super(cause.getMessage(), cause);
         }
     }
 }
