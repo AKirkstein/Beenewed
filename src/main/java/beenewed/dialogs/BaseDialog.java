@@ -4,6 +4,8 @@ import beenewed.model.Models.*;
 import beenewed.model.Store;
 import beenewed.screens.Common;
 import beenewed.ui.*;
+import com.beenewed.backend.exception.NotFoundException;
+import com.beenewed.backend.exception.ValidationException;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -83,7 +85,19 @@ public abstract class BaseDialog extends JDialog {
 
         // Footer
         primaryBtn = UI.primary(primaryText, primaryIcon);
-        primaryBtn.addActionListener(e -> { if (save()) { Store.get().changed(); close(); } else refit(); });
+        primaryBtn.addActionListener(e -> {
+            try {
+                if (save()) {
+                    Store.get().changed();
+                    close();
+                } else {
+                    refit();
+                }
+            } catch (ValidationException | NotFoundException | Store.BackendAccessException error) {
+                Common.showBackendError(this, error);
+                refit();
+            }
+        });
         cancelBtn.addActionListener(e -> cancel());
         JPanel footer = new JPanel(new BorderLayout()) {
             @Override protected void paintComponent(Graphics g0) {
@@ -129,7 +143,15 @@ public abstract class BaseDialog extends JDialog {
         del.addActionListener(e -> {
             int ok = JOptionPane.showConfirmDialog(this, "Delete this " + what + "? This cannot be undone.", "Delete " + what,
                     JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
-            if (ok == JOptionPane.OK_OPTION) { action.run(); Store.get().changed(); close(); }
+            if (ok == JOptionPane.OK_OPTION) {
+                try {
+                    action.run();
+                    Store.get().changed();
+                    close();
+                } catch (ValidationException | NotFoundException | Store.BackendAccessException error) {
+                    Common.showBackendError(this, error);
+                }
+            }
         });
         footerLeft.add(del);
     }

@@ -3,12 +3,15 @@ package beenewed.screens;
 import beenewed.App;
 import beenewed.model.Store;
 import beenewed.ui.*;
+import beenewed.screens.Common;
+import com.beenewed.backend.exception.NotFoundException;
+import com.beenewed.backend.exception.ValidationException;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
 
-/** S6 \u2014 Settings & Preferences (saved locally with java.util.prefs). */
+/** S6 \u2014 Settings & Preferences backed by the local SQLite database. */
 public class SettingsScreen extends JPanel {
     private static final String[] WINDOWS = {"3 Days Before", "7 Days Before", "14 Days Before", "30 Days Before"};
     private static final int[] WINDOW_DAYS = {3, 7, 14, 30};
@@ -64,9 +67,14 @@ public class SettingsScreen extends JPanel {
         discard.addActionListener(e -> refresh());
         UI.Btn save = UI.primary("Save Preferences", Icons.Type.SAVE);
         save.addActionListener(e -> {
-            Store.get().savePrefs(WINDOW_DAYS[remind.getSelectedIndex()], overdue.isOn());
-            savedMsg.setText("Preferences saved.");
-            savedMsg.setForeground(Theme.GREEN);
+            try {
+                Store.get().savePrefs(WINDOW_DAYS[remind.getSelectedIndex()], overdue.isOn());
+                Store.get().changed();
+                savedMsg.setText("Preferences saved.");
+                savedMsg.setForeground(Theme.GREEN);
+            } catch (ValidationException | NotFoundException | Store.BackendAccessException error) {
+                Common.showBackendError(this, error);
+            }
         });
         savedMsg.setIcon(Icons.of(Icons.Type.SAVE, 13, Theme.MUTED));
         UI.RoundPanel bar = UI.card(new BorderLayout(), 14);
@@ -134,9 +142,11 @@ public class SettingsScreen extends JPanel {
         for (int i = 0; i < WINDOW_DAYS.length; i++) if (WINDOW_DAYS[i] == st.remindDays) idx = i;
         remind.setSelectedIndex(idx);
         overdue.setOn(st.showOverdue);
-        int n = st.upcomingReminders().size() + (st.showOverdue ? st.overdue().size() : 0);
+        var summary = st.dashboardSummary();
+        int upcomingCount = summary.upcomingRenewals().size();
+        int n = upcomingCount + (st.showOverdue ? summary.overdueRenewals().size() : 0);
         viewReminders.setText("View Reminders (" + n + ")");
-        reminderHint.setText("<html>Opens reminder dialog: " + st.upcomingReminders().size() + " upcoming renewal" + (st.upcomingReminders().size() == 1 ? "" : "s") + " within " + st.remindDays + " days.</html>");
+        reminderHint.setText("<html>Opens reminder dialog: " + upcomingCount + " upcoming renewal" + (upcomingCount == 1 ? "" : "s") + " within " + st.remindDays + " days.</html>");
         savedMsg.setText("Preferences are saved locally.");
         savedMsg.setForeground(Theme.MUTED);
     }

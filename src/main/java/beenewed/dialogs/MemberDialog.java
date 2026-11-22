@@ -29,7 +29,7 @@ public class MemberDialog extends BaseDialog {
         if (m != null) {
             name.setText(m.name);
             notes.setText(m.notes == null ? "" : m.notes);
-            addDelete("member", () -> { Store.get().members.remove(m); Store.get().contributions.removeIf(c -> c.member == m); });
+            addDelete("member", () -> Store.get().deleteMember(m));
         }
     }
 
@@ -38,12 +38,14 @@ public class MemberDialog extends BaseDialog {
         fName.error(n.isEmpty() ? "Member name is required." : null);
         if (n.isEmpty()) return false;
         String nt = notes.getText().trim();
-        if (editing == null) {
-            Store st = Store.get();
-            st.members.add(new Member(st.newId(), sub, n, nt.isEmpty() ? null : nt));
-        } else {
-            editing.name = n; editing.notes = nt.isEmpty() ? null : nt;
-        }
+        Member updated = editing == null
+                ? new Member(0, sub, n, nt.isEmpty() ? null : nt)
+                : editing;
+        updated.name = n;
+        updated.notes = nt.isEmpty() ? null : nt;
+        Store st = Store.get();
+        if (editing == null) st.addMember(updated);
+        else st.updateMember(updated);
         return true;
     }
 }

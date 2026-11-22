@@ -9,9 +9,7 @@ import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
 import java.time.LocalDate;
-import java.time.format.TextStyle;
 import java.util.List;
-import java.util.Locale;
 
 /** S1 \u2014 Dashboard: stat cards, upcoming renewals and recent payments. */
 public class DashboardScreen extends JPanel {
@@ -21,26 +19,25 @@ public class DashboardScreen extends JPanel {
         removeAll();
         Store st = Store.get();
         LocalDate today = Store.today();
+        var summary = st.dashboardSummary();
 
         UI.Btn add = UI.primary("Add Subscription", Icons.Type.PLUS);
         add.addActionListener(e -> App.get().addSubscription());
         JComponent header = Common.pageHeader("Dashboard", "A quick overview of your subscriptions, payments, and renewals.", add);
 
         // ---- Stat cards
-        double paidThisMonth = st.payments.stream()
-                .filter(p -> p.date.getYear() == today.getYear() && p.date.getMonth() == today.getMonth())
-                .mapToDouble(p -> p.amount).sum();
-        String month = today.getMonth().getDisplayName(TextStyle.SHORT, Locale.ENGLISH) + " " + today.getYear();
+        String month = today.getMonth().getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.ENGLISH)
+                + " " + today.getYear();
         JPanel stats = UI.clear(new GridLayout(1, 4, 14, 0));
-        stats.add(stat("Active Subscriptions", Icons.Type.CARD, String.valueOf(st.active().size()), "Currently active services"));
-        stats.add(stat("Estimated Monthly Cost", Icons.Type.DASHBOARD, Theme.peso(st.monthlyTotal()), "Current recurring-cost equivalent"));
-        stats.add(stat("Estimated Annual Cost", Icons.Type.CALENDAR, Theme.peso(st.annualTotal()), "Current recurring-cost equivalent"));
-        stats.add(stat("Actual Paid \u2014 " + month, Icons.Type.RECEIPT, Theme.peso(paidThisMonth), "Recorded payments this month"));
+        stats.add(stat("Active Subscriptions", Icons.Type.CARD, String.valueOf(summary.activeSubscriptionCount()), "Currently active services"));
+        stats.add(stat("Estimated Monthly Cost", Icons.Type.DASHBOARD, Theme.peso(summary.estimatedMonthlyCost().doubleValue()), "Current recurring-cost equivalent"));
+        stats.add(stat("Estimated Annual Cost", Icons.Type.CALENDAR, Theme.peso(summary.estimatedAnnualCost().doubleValue()), "Current recurring-cost equivalent"));
+        stats.add(stat("Actual Paid \u2014 " + month, Icons.Type.RECEIPT, Theme.peso(summary.currentMonthActualPaid().doubleValue()), "Recorded payments this month"));
 
         // ---- Upcoming renewals
         DataTable up = new DataTable(new String[]{"Subscription", "Renewal\nDate", "Expected\nAmount", "Due"},
                 new float[]{3.2f, 2f, 1.9f, 1.6f}, new int[]{DataTable.L, DataTable.L, DataTable.R, DataTable.C}, false);
-        List<Subscription> upcoming = st.byRenewal(st.active());
+        List<Subscription> upcoming = st.byRenewal(st.upcomingReminders(summary));
         for (Subscription s : upcoming.subList(0, Math.min(4, upcoming.size()))) {
             up.addRow(() -> App.get().openDetails(s, 0), Common.subCell(s, true), Theme.date(s.nextRenewal), Common.money(s.price, true), Common.dueBadge(s.nextRenewal));
         }
@@ -61,7 +58,7 @@ public class DashboardScreen extends JPanel {
             rp.addRow(() -> App.get().openDetails(p.sub, 1), Common.subCell(p.sub, true), Theme.date(p.date), Common.money(p.amount, true));
         }
         if (pays.isEmpty()) rp.setEmpty("No payments recorded yet.");
-        double total = pays.stream().mapToDouble(p -> p.amount).sum();
+        double total = st.allTimeActualPaid().doubleValue();
         UI.Btn viewAllPay = UI.link("View All");
         viewAllPay.addActionListener(e -> App.get().openRenewals(1));
         JLabel totalLbl = UI.label("<html>Total of " + pays.size() + " recorded payments: <b style='color:#0F172A'>" + Theme.peso(total) + "</b></html>", Theme.SMALL, Theme.MUTED);

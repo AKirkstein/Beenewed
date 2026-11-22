@@ -5,6 +5,8 @@ import beenewed.model.Models;
 import beenewed.model.Models.*;
 import beenewed.model.Store;
 import beenewed.ui.*;
+import com.beenewed.backend.exception.NotFoundException;
+import com.beenewed.backend.exception.ValidationException;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -12,7 +14,6 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import java.awt.*;
 import java.util.List;
-import java.util.stream.Collectors;
 
 /** S2 \u2014 Subscriptions list with search, category and status filters. */
 public class SubscriptionsScreen extends JPanel {
@@ -80,14 +81,13 @@ public class SubscriptionsScreen extends JPanel {
 
     public void refresh() {
         Store st = Store.get();
-        String q = search.getText().trim().toLowerCase();
+        String q = search.getText().trim();
         String cat = category.selected();
         String stat = status.selected();
-        List<Subscription> list = st.subscriptions.stream()
-                .filter(s -> q.isEmpty() || s.name.toLowerCase().contains(q) || s.category.toLowerCase().contains(q))
-                .filter(s -> cat == null || cat.startsWith("All") || s.category.equals(cat))
-                .filter(s -> stat == null || stat.startsWith("All") || s.status.label.equals(stat))
-                .collect(Collectors.toList());
+        Status selectedStatus = stat == null || stat.startsWith("All")
+                ? null
+                : Status.valueOf(stat.toUpperCase());
+        List<Subscription> list = st.findSubscriptions(q, cat, selectedStatus);
 
         long activeShown = list.stream().filter(s -> s.status == Status.ACTIVE).count();
         showing.setText("Showing " + list.size() + (list.size() == activeShown ? " active" : "") + " subscription" + (list.size() == 1 ? "" : "s"));
@@ -108,10 +108,11 @@ public class SubscriptionsScreen extends JPanel {
                     s.cycle.label, Theme.date(s.nextRenewal), Common.statusBadge(s.status), UI.hrow(6, view, more));
         }
         if (list.isEmpty()) t.setEmpty("No subscriptions match your filters.");
-        JLabel totalActive = UI.label("Total active subscriptions: " + st.active().size(), Theme.SMALL, Theme.TEXT_2);
+        var summary = st.dashboardSummary();
+        JLabel totalActive = UI.label("Total active subscriptions: " + summary.activeSubscriptionCount(), Theme.SMALL, Theme.TEXT_2);
         totalActive.setIcon(Icons.of(Icons.Type.CHECK_CIRCLE, 14, Theme.GREEN));
-        JLabel totals = UI.label("<html>Monthly normalized cost: <b style='color:#1D5BD8'>" + Theme.peso(st.monthlyTotal())
-                + "</b> &nbsp;\u2022&nbsp; Annual equivalent: <b style='color:#0F172A'>" + Theme.peso(st.annualTotal()) + "</b></html>", Theme.SMALL, Theme.TEXT_2);
+        JLabel totals = UI.label("<html>Monthly normalized cost: <b style='color:#1D5BD8'>" + Theme.peso(summary.estimatedMonthlyCost().doubleValue())
+                + "</b> &nbsp;\u2022&nbsp; Annual equivalent: <b style='color:#0F172A'>" + Theme.peso(summary.estimatedAnnualCost().doubleValue()) + "</b></html>", Theme.SMALL, Theme.TEXT_2);
         t.setFooter(totalActive, totals);
 
         installKeyboard(t, list);
@@ -132,7 +133,14 @@ public class SubscriptionsScreen extends JPanel {
         m.add(item("Delete", Icons.Type.TRASH, () -> {
             int ok = JOptionPane.showConfirmDialog(App.get(), "Delete " + s.name + " and all of its records?", "Delete Subscription",
                     JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
-            if (ok == JOptionPane.OK_OPTION) { Store.get().deleteSubscription(s); Store.get().changed(); }
+            if (ok == JOptionPane.OK_OPTION) {
+                try {
+                    Store.get().deleteSubscription(s);
+                    Store.get().changed();
+                } catch (ValidationException | NotFoundException | Store.BackendAccessException error) {
+                    Common.showBackendError(this, error);
+                }
+            }
         }));
         return m;
     }

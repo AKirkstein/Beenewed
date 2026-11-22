@@ -53,7 +53,7 @@ public class ContributionDialog extends BaseDialog {
             payment.setSelectedItem(c.payment);
             amount.setText(Theme.num(c.amount).replace(",", ""));
             date.setDate(c.date);
-            addDelete("contribution", () -> st.contributions.remove(c));
+            addDelete("contribution", () -> st.deleteContribution(c));
         }
     }
 
@@ -75,12 +75,16 @@ public class ContributionDialog extends BaseDialog {
 
         Member m = (Member) member.getSelectedItem();
         Payment p = (Payment) payment.getSelectedItem();
-        if (editing == null) {
-            Store st = Store.get();
-            st.contributions.add(new Contribution(st.newId(), sub, m, p, a, d));
-        } else {
-            editing.member = m; editing.payment = p; editing.amount = a; editing.date = d;
-        }
+        Contribution updated = editing == null
+                ? new Contribution(0, sub, m, p, a, d)
+                : editing;
+        updated.member = m;
+        updated.payment = p;
+        updated.amount = a;
+        updated.date = d;
+        Store st = Store.get();
+        if (editing == null) st.recordContribution(updated);
+        else st.updateContribution(updated);
         return true;
     }
 }

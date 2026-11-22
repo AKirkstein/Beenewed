@@ -87,7 +87,9 @@ public final class SubscriptionDao {
                        s.billing_cycle, s.next_renewal_date, s.status,
                        s.created_at, s.updated_at
                 FROM subscriptions s
-                WHERE (? IS NULL OR lower(s.name) LIKE lower(?) ESCAPE '\\')
+                WHERE (? IS NULL
+                       OR lower(s.name) LIKE lower(?) ESCAPE '\\'
+                       OR lower(s.category) LIKE lower(?) ESCAPE '\\')
                   AND (? IS NULL OR s.category = ?)
                   AND (? IS NULL OR s.status = ?)
                 ORDER BY s.name COLLATE NOCASE, s.id
@@ -98,10 +100,11 @@ public final class SubscriptionDao {
         try (PreparedStatement statement = connection.prepareStatement(sql)) {
             setNullableString(statement, 1, normalizedSearch);
             setNullableString(statement, 2, containsPattern(normalizedSearch));
-            setNullableString(statement, 3, normalizedCategory);
+            setNullableString(statement, 3, containsPattern(normalizedSearch));
             setNullableString(statement, 4, normalizedCategory);
-            setNullableString(statement, 5, statusValue);
+            setNullableString(statement, 5, normalizedCategory);
             setNullableString(statement, 6, statusValue);
+            setNullableString(statement, 7, statusValue);
             try (ResultSet resultSet = statement.executeQuery()) {
                 return mapAll(resultSet);
             }
@@ -118,6 +121,35 @@ public final class SubscriptionDao {
                 """;
         try (PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, SubscriptionStatus.ACTIVE.name());
+            try (ResultSet resultSet = statement.executeQuery()) {
+                return mapAll(resultSet);
+            }
+        }
+    }
+
+    public List<Subscription> findByRenewalDateRange(
+            LocalDate startDate,
+            LocalDate endDate,
+            SubscriptionStatus status) throws SQLException {
+        String sql = """
+                SELECT id, name, category, icon_key, current_price, billing_cycle,
+                       next_renewal_date, status, created_at, updated_at
+                FROM subscriptions
+                WHERE (? IS NULL OR next_renewal_date >= ?)
+                  AND (? IS NULL OR next_renewal_date <= ?)
+                  AND (? IS NULL OR status = ?)
+                ORDER BY next_renewal_date, name COLLATE NOCASE, id
+                """;
+        String start = startDate == null ? null : startDate.toString();
+        String end = endDate == null ? null : endDate.toString();
+        String statusValue = status == null ? null : status.name();
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            setNullableString(statement, 1, start);
+            setNullableString(statement, 2, start);
+            setNullableString(statement, 3, end);
+            setNullableString(statement, 4, end);
+            setNullableString(statement, 5, statusValue);
+            setNullableString(statement, 6, statusValue);
             try (ResultSet resultSet = statement.executeQuery()) {
                 return mapAll(resultSet);
             }

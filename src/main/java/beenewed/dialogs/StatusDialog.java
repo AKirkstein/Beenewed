@@ -1,6 +1,7 @@
 package beenewed.dialogs;
 
 import beenewed.model.Models.*;
+import beenewed.model.Store;
 import beenewed.screens.Common;
 import beenewed.ui.*;
 
@@ -197,7 +198,7 @@ public class StatusDialog extends BaseDialog {
     }
 
     @Override protected boolean save() {
-        sub.status = status.selected();
+        Store.get().changeStatus(sub, status.selected());
         return true;
     }
 }

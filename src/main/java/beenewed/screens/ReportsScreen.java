@@ -12,9 +12,7 @@ import java.time.LocalDate;
 import java.time.Month;
 import java.time.YearMonth;
 import java.time.format.TextStyle;
-import java.util.*;
-import java.util.List;
-import java.util.stream.Collectors;
+import java.util.Locale;
 
 /** S5 \u2014 Reports: Actual Paid (recorded payments) or Current Estimated Recurring Cost. */
 public class ReportsScreen extends JPanel {
@@ -144,41 +142,45 @@ public class ReportsScreen extends JPanel {
         boolean monthly = "Monthly".equals(aPeriod);
         LocalDate from = monthly ? LocalDate.of(aYear, aMonth, 1) : LocalDate.of(aYear, 1, 1);
         LocalDate to = monthly ? YearMonth.of(aYear, aMonth).atEndOfMonth() : LocalDate.of(aYear, 12, 31);
-        List<Payment> ps = Store.get().payments.stream().filter(p -> !p.date.isBefore(from) && !p.date.isAfter(to)).collect(Collectors.toList());
-        double total = ps.stream().mapToDouble(p -> p.amount).sum();
+        var report = Store.get().actualPaidForRange(from, to);
+        double total = report.totalPaid().doubleValue();
+        int paymentCount = report.paymentCount();
         String label = monthly ? aMonth.getDisplayName(TextStyle.FULL, Locale.ENGLISH) + " " + aYear : String.valueOf(aYear);
         String range = monthly ? aMonth.getDisplayName(TextStyle.SHORT, Locale.ENGLISH) + " 1\u2013" + to.getDayOfMonth() + ", " + aYear : "Jan 1\u2013Dec 31, " + aYear;
 
         JComponent sum = summary(Icons.Type.RECEIPT, "Actual Spending \u2014 " + label, Theme.peso(total), "Actual Paid",
                 "Total recorded payments during the selected period.",
-                chip(Icons.Type.CASH, "Recorded Payments: <b>" + ps.size() + "</b>"),
+                chip(Icons.Type.CASH, "Recorded Payments: <b>" + paymentCount + "</b>"),
                 chip(Icons.Type.CALENDAR, "Reporting Period: <b>" + range + "</b>"),
                 chip(Icons.Type.CHECK_CIRCLE, "Recorded payments"));
 
         // by category
-        Map<String, List<Payment>> byCat = new TreeMap<>();
-        for (Payment p : ps) byCat.computeIfAbsent(p.sub.category, k -> new ArrayList<>()).add(p);
         DataTable ct = new DataTable(new String[]{"Category", "Recorded\nPayments", "Actual Paid"}, new float[]{2.2f, 1.3f, 1.5f},
                 new int[]{DataTable.L, DataTable.C, DataTable.R}, false);
-        byCat.entrySet().stream().sorted((a, b) -> Double.compare(sum(b.getValue()), sum(a.getValue())))
-                .forEach(e -> ct.addRow(null, dotLabel(e.getKey()), center(String.valueOf(e.getValue().size())), Common.money(sum(e.getValue()), true)));
-        if (byCat.isEmpty()) ct.setEmpty("No payments recorded in this period.");
-        else ct.addTotalRow("Total", ps.size(), Theme.peso(total));
+        for (var breakdown : report.byCategory()) {
+            ct.addRow(null, dotLabel(breakdown.category()), center(String.valueOf(breakdown.paymentCount())),
+                    Common.money(breakdown.amountPaid().doubleValue(), true));
+        }
+        if (report.byCategory().isEmpty()) ct.setEmpty("No payments recorded in this period.");
+        else ct.addTotalRow("Total", paymentCount, Theme.peso(total));
 
         // by subscription
-        Map<Subscription, List<Payment>> bySub = new LinkedHashMap<>();
-        ps.stream().sorted(Comparator.comparing((Payment p) -> -p.amount)).forEach(p -> bySub.computeIfAbsent(p.sub, k -> new ArrayList<>()).add(p));
         DataTable st = new DataTable(new String[]{"Subscription", "Category", "Payments", "Amount Paid"}, new float[]{2.1f, 1.5f, 1.1f, 1.5f},
                 new int[]{DataTable.L, DataTable.L, DataTable.C, DataTable.R}, false);
-        bySub.forEach((s, l) -> st.addRow(() -> App.get().openDetails(s, 1), Common.subCell(s, true), UI.label(s.category, Theme.SMALL, Theme.MUTED),
-                center(String.valueOf(l.size())), Common.money(sum(l), true)));
-        if (bySub.isEmpty()) st.setEmpty("No payments recorded in this period.");
-        else st.addTotalRow("Total", "\u2014", ps.size(), Theme.peso(total));
+        for (var breakdown : report.bySubscription()) {
+            Subscription subscription = Store.get().getSubscription(Math.toIntExact(breakdown.subscriptionId()));
+            st.addRow(() -> App.get().openDetails(subscription, 1), Common.subCell(subscription, true),
+                    UI.label(subscription.category, Theme.SMALL, Theme.MUTED),
+                    center(String.valueOf(breakdown.paymentCount())),
+                    Common.money(breakdown.amountPaid().doubleValue(), true));
+        }
+        if (report.bySubscription().isEmpty()) st.setEmpty("No payments recorded in this period.");
+        else st.addTotalRow("Total", "\u2014", paymentCount, Theme.peso(total));
 
         JPanel two = UI.clear(new GridLayout(1, 2, 16, 0));
-        two.add(tableCard("Spending by Category", byCat.size() + (byCat.size() == 1 ? " Category" : " Categories"),
+        two.add(tableCard("Spending by Category", report.byCategory().size() + (report.byCategory().size() == 1 ? " Category" : " Categories"),
                 "Breakdown of recorded subscription payments by category.", ct, null));
-        two.add(tableCard("Spending by Subscription", bySub.size() + (bySub.size() == 1 ? " Subscription" : " Subscriptions"),
+        two.add(tableCard("Spending by Subscription", report.bySubscription().size() + (report.bySubscription().size() == 1 ? " Subscription" : " Subscriptions"),
                 "Recorded spending for each subscription during the selected period.", st, footerHint("Click any subscription to inspect historical ledger records.")));
 
         JComponent note = UI.note(Icons.Type.INFO, Theme.INFO_BG, Theme.PRIMARY, "<html><span style='color:#0B4FCF'>About Actual Spending</span></html>",
@@ -190,55 +192,61 @@ public class ReportsScreen extends JPanel {
     // ---------------------------------------------------------------- Estimate
     private JComponent estimateReport() {
         Store s = Store.get();
+        var report = s.estimatedRecurringCost();
         boolean annual = "Annual Equivalent".equals(aEstimate);
-        List<Subscription> act = s.active();
-        double total = annual ? s.annualTotal() : s.monthlyTotal();
-        long monthlyPlans = act.stream().filter(x -> x.cycle == Cycle.MONTHLY).count();
+        double total = (annual ? report.annualTotal() : report.monthlyTotal()).doubleValue();
+        long monthlyPlans = report.bySubscription().stream()
+                .filter(subscription -> subscription.billingCycle() == com.beenewed.backend.model.BillingCycle.MONTHLY)
+                .count();
+        int activeCount = report.activeSubscriptionCount();
         String eq = annual ? "Annual Equivalent" : "Monthly Equivalent";
 
         JComponent sum = summary(Icons.Type.CLOCK, "Current Estimated " + (annual ? "Annual" : "Monthly") + " Cost", Theme.peso(total), null,
                 "Based on current subscription prices and billing cycles.",
-                chip(Icons.Type.LIST, "Active Subscriptions: <b>" + act.size() + "</b>"),
+                chip(Icons.Type.LIST, "Active Subscriptions: <b>" + activeCount + "</b>"),
                 chip(Icons.Type.CALENDAR, "Monthly Plans: <b>" + monthlyPlans + "</b>"),
-                chip(Icons.Type.CALENDAR, "Yearly Plans: <b>" + (act.size() - monthlyPlans) + "</b>"),
-                chip(Icons.Type.CASH, (annual ? "Monthly Equivalent: <b>" + Theme.peso(s.monthlyTotal()) : "Annual Equivalent: <b>" + Theme.peso(s.annualTotal())) + "</b>"));
+                chip(Icons.Type.CALENDAR, "Yearly Plans: <b>" + (activeCount - monthlyPlans) + "</b>"),
+                chip(Icons.Type.CASH, (annual
+                        ? "Monthly Equivalent: <b>" + Theme.peso(report.monthlyTotal().doubleValue())
+                        : "Annual Equivalent: <b>" + Theme.peso(report.annualTotal().doubleValue())) + "</b>"));
 
-        Map<String, List<Subscription>> byCat = new LinkedHashMap<>();
-        for (Subscription x : act) byCat.computeIfAbsent(x.category, k -> new ArrayList<>()).add(x);
         DataTable ct = new DataTable(new String[]{"Category", "Active\nSubscriptions", eq}, new float[]{5f, 1.4f, 1.4f},
                 new int[]{DataTable.L, DataTable.C, DataTable.R}, false);
-        byCat.forEach((cat, l) -> ct.addRow(null, dotLabel(cat), center(String.valueOf(l.size())), Common.money(eqSum(l, annual), true)));
-        if (byCat.isEmpty()) ct.setEmpty("No active subscriptions.");
-        else ct.addTotalRow("Total", act.size(), Theme.peso(total));
+        for (var category : report.byCategory()) {
+            ct.addRow(null, dotLabel(category.category()), center(String.valueOf(category.subscriptionCount())),
+                    Common.money((annual ? category.annualEquivalent() : category.monthlyEquivalent()).doubleValue(), true));
+        }
+        if (report.byCategory().isEmpty()) ct.setEmpty("No active subscriptions.");
+        else ct.addTotalRow("Total", activeCount, Theme.peso(total));
 
         DataTable st = new DataTable(new String[]{"Subscription", "Category", "Current Price", "Billing Cycle", eq},
                 new float[]{2.2f, 1.6f, 1.4f, 1.4f, 1.8f}, new int[]{DataTable.L, DataTable.L, DataTable.R, DataTable.C, DataTable.R}, false);
-        for (Subscription x : act) {
-            JLabel price = UI.label(Theme.peso(x.price), Theme.SMALL, Theme.TEXT_2);
+        for (var estimate : report.bySubscription()) {
+            Subscription x = s.getSubscription(Math.toIntExact(estimate.subscriptionId()));
+            JLabel price = UI.label(Theme.peso(estimate.currentPrice().doubleValue()), Theme.SMALL, Theme.TEXT_2);
             price.setHorizontalAlignment(SwingConstants.RIGHT);
-            JLabel cyc = UI.label(x.cycle.label, Theme.SMALL, Theme.MUTED);
+            String cycle = estimate.billingCycle() == com.beenewed.backend.model.BillingCycle.MONTHLY
+                    ? Cycle.MONTHLY.label
+                    : Cycle.YEARLY.label;
+            JLabel cyc = UI.label(cycle, Theme.SMALL, Theme.MUTED);
             cyc.setHorizontalAlignment(SwingConstants.CENTER);
             st.addRow(() -> App.get().openDetails(x, 0), Common.subCell(x, true), UI.label(x.category, Theme.SMALL, Theme.MUTED), price, cyc,
-                    Common.money(annual ? x.annualEquivalent() : x.monthlyEquivalent(), true));
+                    Common.money((annual ? estimate.annualEquivalent() : estimate.monthlyEquivalent()).doubleValue(), true));
         }
-        if (act.isEmpty()) st.setEmpty("No active subscriptions.");
+        if (report.bySubscription().isEmpty()) st.setEmpty("No active subscriptions.");
         else st.addTotalRow("Total " + eq, "", "", "", Theme.peso(total));
 
         JComponent note = UI.note(Icons.Type.INFO, Theme.INFO_BG, Theme.PRIMARY, "<html><span style='color:#0B4FCF'>About Recurring Cost Estimates</span></html>",
                 "Estimates are based on current active subscription prices. Yearly plans are divided by 12 for monthly equivalents. These figures are not actual recorded payments.", 760);
         return UI.vstack(16, sum,
-                tableCard("Estimated Cost by Category", byCat.size() + (byCat.size() == 1 ? " Category" : " Categories"),
+                tableCard("Estimated Cost by Category", report.byCategory().size() + (report.byCategory().size() == 1 ? " Category" : " Categories"),
                         (annual ? "Annual" : "Monthly") + " equivalent of active subscription costs grouped by category.", ct, null),
-                tableCard("Estimated Cost by Subscription", act.size() + " Subscriptions",
+                tableCard("Estimated Cost by Subscription", activeCount + " Subscriptions",
                         "Current subscription prices converted to a common " + (annual ? "annual" : "monthly") + " equivalent.", st,
                         footerHint("Click any subscription to view subscription details.")),
                 note);
     }
 
-    private static double sum(List<Payment> l) { return l.stream().mapToDouble(p -> p.amount).sum(); }
-    private static double eqSum(List<Subscription> l, boolean annual) {
-        return l.stream().mapToDouble(x -> annual ? x.annualEquivalent() : x.monthlyEquivalent()).sum();
-    }
     private static JLabel center(String t) {
         JLabel l = UI.label(t, Theme.BODY, Theme.MUTED);
         l.setHorizontalAlignment(SwingConstants.CENTER);

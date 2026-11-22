@@ -22,7 +22,7 @@ public class DetailsScreen extends JPanel {
 
     public void refresh() {
         removeAll();
-        if (sub == null || !Store.get().subscriptions.contains(sub)) {
+        if (sub == null || !Store.get().containsSubscription(sub)) {
             // subscription was deleted -> go back to list
             SwingUtilities.invokeLater(() -> App.get().show(App.Screen.SUBSCRIPTIONS));
             return;

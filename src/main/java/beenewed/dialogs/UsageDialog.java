@@ -45,7 +45,7 @@ public class UsageDialog extends BaseDialog {
             if (u.quantity != null) qty.setText(u.quantity == Math.floor(u.quantity) ? String.valueOf(u.quantity.longValue()) : String.valueOf(u.quantity));
             if (u.unit != null) unit.setSelectedItem(u.unit);
             notes.setText(u.notes == null ? "" : u.notes);
-            addDelete("usage entry", () -> Store.get().usages.remove(u));
+            addDelete("usage entry", () -> Store.get().deleteUsage(u));
         } else {
             date.setDate(Store.today());
         }
@@ -72,12 +72,16 @@ public class UsageDialog extends BaseDialog {
         } else fNotes.error(null);
         if (!ok) return false;
 
-        if (editing == null) {
-            Store st = Store.get();
-            st.usages.add(new Usage(st.newId(), sub, d, q, q == null ? null : u, n.isEmpty() ? null : n));
-        } else {
-            editing.date = d; editing.quantity = q; editing.unit = q == null ? null : u; editing.notes = n.isEmpty() ? null : n;
-        }
+        Usage updated = editing == null
+                ? new Usage(0, sub, d, q, q == null ? null : u, n.isEmpty() ? null : n)
+                : editing;
+        updated.date = d;
+        updated.quantity = q;
+        updated.unit = q == null ? null : u;
+        updated.notes = n.isEmpty() ? null : n;
+        Store st = Store.get();
+        if (editing == null) st.addUsage(updated);
+        else st.updateUsage(updated);
         return true;
     }
 }

@@ -97,6 +97,7 @@ public class SubscriptionDialog extends BaseDialog {
             cycle.setSelectedItem(s.cycle);
             price.setText(Theme.num(s.price).replace(",", ""));
             renewal.setDate(s.nextRenewal);
+            price.setEnabled(false);
             iconCustom = s.icon != Models.defaultIcon(s.category);
             setIcon(s.icon);
             // In edit mode the price is managed through Record Price Change
@@ -159,16 +160,17 @@ public class SubscriptionDialog extends BaseDialog {
         if (!ok) { body.revalidate(); body.repaint(); return false; }
 
         Store st = Store.get();
-        if (editing == null) {
-            st.subscriptions.add(new Subscription(st.newId(), n, categoryValue(), icon, p, cycle.selected(), d));
-        } else {
-            if (Math.abs(editing.price - p) > 0.001) {
-                // keep history consistent: log the edit as a price change
-                st.priceChanges.add(new PriceChange(st.newId(), editing, Store.today(), editing.price, p, "Edited via Edit Subscription"));
-            }
-            editing.name = n; editing.category = categoryValue(); editing.icon = icon;
-            editing.price = p; editing.cycle = cycle.selected(); editing.nextRenewal = d;
-        }
+        Subscription updated = editing == null
+                ? new Subscription(0, n, categoryValue(), icon, p, cycle.selected(), d)
+                : editing;
+        updated.name = n;
+        updated.category = categoryValue();
+        updated.icon = icon;
+        updated.price = editing == null ? p : editing.price;
+        updated.cycle = cycle.selected();
+        updated.nextRenewal = d;
+        if (editing == null) st.addSubscription(updated);
+        else st.updateSubscription(updated);
         return true;
     }
 }

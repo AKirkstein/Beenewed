@@ -4,10 +4,12 @@ import com.beenewed.backend.dao.PaymentDao;
 import com.beenewed.backend.dao.SubscriptionDao;
 import com.beenewed.backend.exception.NotFoundException;
 import com.beenewed.backend.exception.ValidationException;
+import com.beenewed.backend.model.BillingCycle;
 import com.beenewed.backend.model.Payment;
 import com.beenewed.backend.model.Subscription;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.Year;
@@ -42,6 +44,12 @@ public final class ReportService {
         return actualPaidForRange(year.atDay(1), year.atMonth(12).atEndOfMonth());
     }
 
+    public BigDecimal allTimeActualPaid() throws SQLException {
+        return paymentDao.findAll().stream()
+                .map(Payment::amountPaid)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
     public ActualPaidReport actualPaidForRange(LocalDate startDate, LocalDate endDate) throws SQLException {
         if (startDate == null || endDate == null) {
             throw new ValidationException("Report start and end dates are required");
@@ -56,7 +64,8 @@ public final class ReportService {
         }
 
         BigDecimal totalPaid = BigDecimal.ZERO;
-        Map<String, BigDecimal> categoryTotals = new HashMap<>();
+        int paymentCount = 0;
+        Map<String, CategoryPaidTotal> categoryTotals = new HashMap<>();
         Map<Long, SubscriptionTotal> subscriptionTotals = new HashMap<>();
         for (Payment payment : paymentDao.findByDateRange(startDate, endDate)) {
             Subscription subscription = subscriptions.get(payment.subscriptionId());
@@ -66,19 +75,24 @@ public final class ReportService {
             }
             BigDecimal amount = payment.amountPaid();
             totalPaid = totalPaid.add(amount);
-            categoryTotals.merge(subscription.category(), amount, BigDecimal::add);
+            paymentCount++;
+            categoryTotals.compute(subscription.category(), (category, current) -> current == null
+                    ? new CategoryPaidTotal(amount, 1)
+                    : new CategoryPaidTotal(current.amountPaid().add(amount), current.paymentCount() + 1));
             subscriptionTotals.compute(payment.subscriptionId(), (id, current) -> current == null
-                    ? new SubscriptionTotal(id, subscription.name(), amount)
-                    : new SubscriptionTotal(id, current.name(), current.amountPaid().add(amount)));
+                    ? new SubscriptionTotal(id, subscription.name(), amount, 1)
+                    : new SubscriptionTotal(id, current.name(), current.amountPaid().add(amount), current.paymentCount() + 1));
         }
 
         List<CategoryBreakdown> byCategory = new ArrayList<>();
-        categoryTotals.forEach((category, amount) -> byCategory.add(new CategoryBreakdown(category, amount)));
+        categoryTotals.forEach((category, total) ->
+                byCategory.add(new CategoryBreakdown(category, total.amountPaid(), total.paymentCount())));
         byCategory.sort(Comparator.comparing(CategoryBreakdown::category, String.CASE_INSENSITIVE_ORDER));
 
         List<SubscriptionBreakdown> bySubscription = new ArrayList<>();
         subscriptionTotals.forEach((id, value) ->
-                bySubscription.add(new SubscriptionBreakdown(id, value.name(), value.amountPaid())));
+                bySubscription.add(new SubscriptionBreakdown(
+                        id, value.name(), value.amountPaid(), value.paymentCount())));
         bySubscription.sort(Comparator.comparing(
                         SubscriptionBreakdown::subscriptionName,
                         String.CASE_INSENSITIVE_ORDER)
@@ -88,29 +102,123 @@ public final class ReportService {
                 startDate,
                 endDate,
                 totalPaid,
+                paymentCount,
                 byCategory,
                 bySubscription);
     }
 
-    private record SubscriptionTotal(Long id, String name, BigDecimal amountPaid) {
+    public EstimatedRecurringReport currentEstimatedRecurringCost() throws SQLException {
+        List<Subscription> activeSubscriptions = subscriptionDao.findActiveSubscriptions();
+        BigDecimal monthlyTotal = BigDecimal.ZERO;
+        BigDecimal annualTotal = BigDecimal.ZERO;
+        Map<String, CategoryEstimateTotal> categoryTotals = new HashMap<>();
+        List<SubscriptionEstimate> subscriptionEstimates = new ArrayList<>();
+
+        for (Subscription subscription : activeSubscriptions) {
+            BigDecimal monthly = subscription.billingCycle() == BillingCycle.MONTHLY
+                    ? subscription.currentPrice().setScale(2, RoundingMode.HALF_UP)
+                    : subscription.currentPrice().divide(BigDecimal.valueOf(12), 2, RoundingMode.HALF_UP);
+            BigDecimal annual = subscription.billingCycle() == BillingCycle.MONTHLY
+                    ? subscription.currentPrice().multiply(BigDecimal.valueOf(12)).setScale(2, RoundingMode.HALF_UP)
+                    : subscription.currentPrice().setScale(2, RoundingMode.HALF_UP);
+            monthlyTotal = monthlyTotal.add(monthly);
+            annualTotal = annualTotal.add(annual);
+            categoryTotals.compute(subscription.category(), (category, current) -> current == null
+                    ? new CategoryEstimateTotal(1, monthly, annual)
+                    : new CategoryEstimateTotal(
+                            current.subscriptionCount() + 1,
+                            current.monthlyEquivalent().add(monthly),
+                            current.annualEquivalent().add(annual)));
+            subscriptionEstimates.add(new SubscriptionEstimate(
+                    subscription.id(),
+                    subscription.name(),
+                    subscription.category(),
+                    subscription.billingCycle(),
+                    subscription.currentPrice(),
+                    monthly,
+                    annual));
+        }
+
+        List<CategoryEstimate> byCategory = new ArrayList<>();
+        categoryTotals.forEach((category, total) ->
+                byCategory.add(new CategoryEstimate(
+                        category,
+                        total.subscriptionCount(),
+                        total.monthlyEquivalent(),
+                        total.annualEquivalent())));
+        byCategory.sort(Comparator.comparing(CategoryEstimate::category, String.CASE_INSENSITIVE_ORDER));
+        subscriptionEstimates.sort(Comparator.comparing(
+                        SubscriptionEstimate::name,
+                        String.CASE_INSENSITIVE_ORDER)
+                .thenComparing(SubscriptionEstimate::subscriptionId));
+
+        return new EstimatedRecurringReport(
+                activeSubscriptions.size(),
+                monthlyTotal,
+                annualTotal,
+                byCategory,
+                subscriptionEstimates);
     }
 
-    public record CategoryBreakdown(String category, BigDecimal amountPaid) {
+    private record CategoryPaidTotal(BigDecimal amountPaid, int paymentCount) {
+    }
+
+    private record SubscriptionTotal(Long id, String name, BigDecimal amountPaid, int paymentCount) {
+    }
+
+    private record CategoryEstimateTotal(
+            int subscriptionCount,
+            BigDecimal monthlyEquivalent,
+            BigDecimal annualEquivalent) {
+    }
+
+    public record CategoryBreakdown(String category, BigDecimal amountPaid, int paymentCount) {
     }
 
     public record SubscriptionBreakdown(
             Long subscriptionId,
             String subscriptionName,
-            BigDecimal amountPaid) {
+            BigDecimal amountPaid,
+            int paymentCount) {
     }
 
     public record ActualPaidReport(
             LocalDate startDate,
             LocalDate endDate,
             BigDecimal totalPaid,
+            int paymentCount,
             List<CategoryBreakdown> byCategory,
             List<SubscriptionBreakdown> bySubscription) {
         public ActualPaidReport {
+            byCategory = List.copyOf(byCategory);
+            bySubscription = List.copyOf(bySubscription);
+        }
+    }
+
+    public record CategoryEstimate(
+            String category,
+            int subscriptionCount,
+            BigDecimal monthlyEquivalent,
+            BigDecimal annualEquivalent) {
+    }
+
+    public record SubscriptionEstimate(
+            Long subscriptionId,
+            String name,
+            String category,
+            BillingCycle billingCycle,
+            BigDecimal currentPrice,
+            BigDecimal monthlyEquivalent,
+            BigDecimal annualEquivalent) {
+    }
+
+    public record EstimatedRecurringReport(
+            int activeSubscriptionCount,
+            BigDecimal monthlyTotal,
+            BigDecimal annualTotal,
+            List<CategoryEstimate> byCategory,
+            List<SubscriptionEstimate> bySubscription) {
+        public EstimatedRecurringReport {
             byCategory = List.copyOf(byCategory);
             bySubscription = List.copyOf(bySubscription);
         }

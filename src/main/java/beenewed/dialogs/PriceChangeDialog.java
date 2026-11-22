@@ -46,9 +46,7 @@ public class PriceChangeDialog extends BaseDialog {
         ok &= d != null;
         if (!ok) return false;
         String n = notes.getText().trim();
-        Store st = Store.get();
-        st.priceChanges.add(new PriceChange(st.newId(), sub, d, sub.price, p, n.isEmpty() ? null : n));
-        sub.price = p;
+        Store.get().recordPriceChange(sub, d, p, n.isEmpty() ? null : n);
         return true;
     }
 }

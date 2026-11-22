@@ -5,11 +5,14 @@ import beenewed.model.Models.*;
 import beenewed.model.Store;
 import beenewed.screens.*;
 import beenewed.ui.*;
+import com.beenewed.backend.BackendContext;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
 import java.awt.event.*;
+import java.io.IOException;
+import java.sql.SQLException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -27,6 +30,7 @@ public class App extends JFrame {
     private final JPanel content = new JPanel(cards);
     private final Map<Screen, JLabel> navItems = new LinkedHashMap<>();
     private Screen current = Screen.DASHBOARD;
+    private final BackendContext backendContext;
 
     private final DashboardScreen dashboard = new DashboardScreen();
     private final SubscriptionsScreen subscriptions = new SubscriptionsScreen();
@@ -35,10 +39,17 @@ public class App extends JFrame {
     private final ReportsScreen reports = new ReportsScreen();
     private final SettingsScreen settings = new SettingsScreen();
 
-    public App() {
+    public App(BackendContext backendContext) {
         super("Beenewed \u2014 Subscription Tracker");
+        this.backendContext = backendContext;
         instance = this;
-        setDefaultCloseOperation(EXIT_ON_CLOSE);
+        setDefaultCloseOperation(DO_NOTHING_ON_CLOSE);
+        addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosing(WindowEvent event) {
+                closeBackend();
+            }
+        });
         setSize(1280, 860);
         setMinimumSize(new Dimension(1080, 680));
         setLocationRelativeTo(null);
@@ -166,13 +177,32 @@ public class App extends JFrame {
     }
 
     private void refreshCurrent() {
-        switch (current) {
-            case DASHBOARD -> dashboard.refresh();
-            case SUBSCRIPTIONS -> subscriptions.refresh();
-            case DETAILS -> details.refresh();
-            case RENEWALS -> renewals.refresh();
-            case REPORTS -> reports.refresh();
-            case SETTINGS -> settings.refresh();
+        try {
+            Store.get().refresh();
+            switch (current) {
+                case DASHBOARD -> dashboard.refresh();
+                case SUBSCRIPTIONS -> subscriptions.refresh();
+                case DETAILS -> details.refresh();
+                case RENEWALS -> renewals.refresh();
+                case REPORTS -> reports.refresh();
+                case SETTINGS -> settings.refresh();
+            }
+        } catch (Store.BackendAccessException error) {
+            Common.showBackendError(this, error);
+        }
+    }
+
+    private void closeBackend() {
+        try {
+            backendContext.close();
+            dispose();
+            System.exit(0);
+        } catch (SQLException error) {
+            JOptionPane.showMessageDialog(
+                    this,
+                    error.getMessage(),
+                    "Unable to close database",
+                    JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -193,7 +223,25 @@ public class App extends JFrame {
         System.setProperty("swing.aatext", "true");
         SwingUtilities.invokeLater(() -> {
             installLookAndFeel();
-            new App().setVisible(true);
+            BackendContext backend = null;
+            try {
+                backend = new BackendContext();
+                Store.initialize(backend);
+                new App(backend).setVisible(true);
+            } catch (SQLException | IOException error) {
+                if (backend != null) {
+                    try {
+                        backend.close();
+                    } catch (SQLException closeError) {
+                        error.addSuppressed(closeError);
+                    }
+                }
+                JOptionPane.showMessageDialog(
+                        null,
+                        error.getMessage(),
+                        "Unable to initialize database",
+                        JOptionPane.ERROR_MESSAGE);
+            }
         });
     }
 

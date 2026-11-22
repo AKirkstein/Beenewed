@@ -8,7 +8,6 @@ import com.beenewed.backend.model.Payment;
 import com.beenewed.backend.model.Subscription;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.sql.SQLException;
 import java.time.Clock;
 import java.time.LocalDate;
@@ -21,7 +20,6 @@ import java.util.Objects;
 
 public final class DashboardService {
     private static final int RECENT_PAYMENT_LIMIT = 5;
-    private static final int CURRENCY_SCALE = 2;
 
     private final Clock clock;
     private final SubscriptionDao subscriptionDao;
@@ -47,22 +45,8 @@ public final class DashboardService {
         LocalDate today = LocalDate.now(clock);
         List<Subscription> activeSubscriptions = subscriptionDao.findActiveSubscriptions();
         AppPreferences preferences = appPreferencesService.get();
-
-        BigDecimal monthlyEstimate = BigDecimal.ZERO;
-        BigDecimal annualEstimate = BigDecimal.ZERO;
-        for (Subscription subscription : activeSubscriptions) {
-            if (subscription.billingCycle() == BillingCycle.MONTHLY) {
-                monthlyEstimate = monthlyEstimate.add(subscription.currentPrice());
-                annualEstimate = annualEstimate.add(subscription.currentPrice().multiply(BigDecimal.valueOf(12)));
-            } else {
-                monthlyEstimate = monthlyEstimate.add(
-                        subscription.currentPrice().divide(
-                                BigDecimal.valueOf(12),
-                                CURRENCY_SCALE,
-                                RoundingMode.HALF_UP));
-                annualEstimate = annualEstimate.add(subscription.currentPrice());
-            }
-        }
+        ReportService.EstimatedRecurringReport recurringCosts =
+                reportService.currentEstimatedRecurringCost();
 
         YearMonth currentMonth = YearMonth.from(today);
         BigDecimal currentMonthActualPaid = reportService.actualPaidForRange(
@@ -95,8 +79,8 @@ public final class DashboardService {
 
         return new DashboardSummary(
                 activeSubscriptions.size(),
-                monthlyEstimate.setScale(CURRENCY_SCALE, RoundingMode.HALF_UP),
-                annualEstimate.setScale(CURRENCY_SCALE, RoundingMode.HALF_UP),
+                recurringCosts.monthlyTotal(),
+                recurringCosts.annualTotal(),
                 currentMonthActualPaid,
                 recentPayments,
                 upcomingRenewals,

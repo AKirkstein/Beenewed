@@ -13,6 +13,17 @@ import java.time.LocalDate;
 public final class Common {
     private Common() {}
 
+    public static void showBackendError(Component parent, RuntimeException error) {
+        Throwable cause = error instanceof Store.BackendAccessException && error.getCause() != null
+                ? error.getCause()
+                : error;
+        JOptionPane.showMessageDialog(
+                parent,
+                cause.getMessage() == null ? "The operation could not be completed." : cause.getMessage(),
+                "Unable to complete operation",
+                JOptionPane.ERROR_MESSAGE);
+    }
+
     public static UI.Pill statusBadge(Status s) {
         return switch (s) {
             case ACTIVE -> UI.badge("Active", Theme.GREEN, Theme.GREEN_BG);

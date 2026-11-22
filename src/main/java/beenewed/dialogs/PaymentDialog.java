@@ -68,7 +68,7 @@ public class PaymentDialog extends BaseDialog {
             period.setText(p.period == null ? "" : p.period);
             method.setSelectedItem(p.method == null ? "Not specified" : p.method);
             notes.setText(p.notes == null ? "" : p.notes);
-            addDelete("payment", () -> { st.payments.remove(p); st.contributions.removeIf(c -> c.payment == p); });
+            addDelete("payment", () -> st.deletePayment(p));
         } else {
             if (preset != null) sub.setSelectedItem(preset);
             else if (!st.subscriptions.isEmpty()) sub.setSelectedIndex(0);
@@ -97,13 +97,18 @@ public class PaymentDialog extends BaseDialog {
         if (!ok) return false;
 
         String n = notes.getText().trim();
-        if (editing == null) {
-            Store st = Store.get();
-            st.payments.add(new Payment(st.newId(), sub.selected(), d, a, per, method.selected(), n.isEmpty() ? null : n));
-        } else {
-            editing.sub = sub.selected(); editing.date = d; editing.amount = a;
-            editing.period = per; editing.method = method.selected(); editing.notes = n.isEmpty() ? null : n;
-        }
+        Payment updated = editing == null
+                ? new Payment(0, sub.selected(), d, a, per, method.selected(), n.isEmpty() ? null : n)
+                : editing;
+        updated.sub = sub.selected();
+        updated.date = d;
+        updated.amount = a;
+        updated.period = per;
+        updated.method = method.selected();
+        updated.notes = n.isEmpty() ? null : n;
+        Store st = Store.get();
+        if (editing == null) st.recordPayment(updated);
+        else st.updatePayment(updated);
         return true;
     }
 }

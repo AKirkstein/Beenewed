@@ -44,6 +44,16 @@ public final class SubscriptionService {
         return subscriptionDao.findFiltered(search, category, status);
     }
 
+    public List<Subscription> findByRenewalDateRange(
+            LocalDate startDate,
+            LocalDate endDate,
+            SubscriptionStatus status) throws SQLException {
+        if (startDate != null && endDate != null && endDate.isBefore(startDate)) {
+            throw new ValidationException("Renewal end date must not be before start date");
+        }
+        return subscriptionDao.findByRenewalDateRange(startDate, endDate, status);
+    }
+
     public Subscription update(Subscription subscription) throws SQLException {
         validate(subscription);
         if (subscription.id() == null) {
