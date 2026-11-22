@@ -15,13 +15,13 @@ Keeping track of recurring subscriptions, shared costs and household members, pa
 - **Your preference is saved** to your account in Supabase (`app_preferences`). Light mode is the default for new accounts.
 - All colours live in `src/main/java/beenewed/ui/Theme.java` (`Theme.apply(dark)`), using the Beenewed palette: yellow `#F4B315`, orange `#E59312`, warm `#D3AF85`, and `#1A141A` / `#423738` / `#514344` for dark surfaces.
 
-## Prerequisites & Recommended Extensions
+## Prerequisites & Tools
 
 Before running the app, make sure you have:
 
-- **JDK 17+** — verify with `java -version`
-- **Apache Maven (3.8+)** — verify with `mvn -version`
-- **VS Code (Optional):** If you are using Visual Studio Code, install the **Extension Pack for Java** (`vscjava.vscode-java-pack`) for Java support, Maven integration, and easy running/debugging.
+- **Java Development Kit (JDK 17+)** — verify with `java -version`
+- **Apache Maven 3.10.2 (Binary Zip)** — step-by-step Windows setup instructions are in **Step 2** below
+- **VS Code (Optional):** Install the **Extension Pack for Java** (`vscjava.vscode-java-pack`) for Java IntelliSense, Maven integration, and easy running/debugging.
 
 ## How to Build & Run
 
@@ -34,7 +34,31 @@ git clone https://github.com/AKirkstein/Beenewed.git
 cd Beenewed
 ```
 
-### Step 2: Configure Supabase credentials
+### Step 2: Install & Configure Maven (Windows)
+
+If you already have Maven installed and `mvn -version` works in your terminal, you can skip to **Step 3**.
+
+1. Go to the official Apache Maven download page: https://maven.apache.org/download.cgi
+2. Under **Files**, download the **Binary zip archive**: `apache-maven-3.10.2-bin.zip`.
+3. Extract the zip file to a clean, permanent directory—for example:
+   - `C:\Program Files\apache-maven-3.10.2` or
+   - `C:\tools\apache-maven-3.10.2`
+4. Add Maven to your Windows Environment Variables:
+   1. Open Windows Search, type **"Edit the system environment variables"**, and open it.
+   2. Click **Environment Variables...** near the bottom-right.
+   3. Under **System variables**, select `Path` and click **Edit**.
+   4. Click **New** and paste the path to Maven's `bin` folder (for example, `C:\Program Files\apache-maven-3.10.2\bin`).
+   5. *(Optional best practice)* Under **System variables**, click **New** and add `MAVEN_HOME` (or `M2_HOME`) pointing to the extracted root folder (for example, `C:\Program Files\apache-maven-3.10.2`).
+   6. Click **OK** on all open dialogs to save.
+5. Open a **new** terminal window (PowerShell or Command Prompt) and verify the installation:
+
+```sh
+mvn -version
+```
+
+You should see Apache Maven 3.10.2 and your Java 17+ version printed.
+
+### Step 3: Configure credentials
 
 Copy `.env.example` to `.env` in the project root:
 
@@ -55,7 +79,7 @@ SUPABASE_ANON_KEY=your-supabase-anon-key
 
 > **Note for groupmates:** Ask a teammate for the shared `SUPABASE_URL` and `SUPABASE_ANON_KEY` values. **Never commit `.env` to Git** (it is already ignored in `.gitignore`). You can also set `SUPABASE_URL` and `SUPABASE_ANON_KEY` directly as system environment variables instead of using a `.env` file.
 
-### Step 3: Build & Run
+### Step 4: Run the application
 
 **Quick start on Windows:**
 
