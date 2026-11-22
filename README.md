@@ -36,24 +36,24 @@ cd Beenewed
 
 ### Step 2: Configure Supabase credentials
 
-Copy `supabase.properties.example` to `supabase.properties` in the project root:
+Copy `.env.example` to `.env` in the project root:
 
 ```sh
 # Windows (PowerShell)
-Copy-Item supabase.properties.example supabase.properties
+Copy-Item .env.example .env
 
 # macOS / Linux
-cp supabase.properties.example supabase.properties
+cp .env.example .env
 ```
 
-Open `supabase.properties` and paste the project's `SUPABASE_URL` and `SUPABASE_ANON_KEY`:
+Open `.env` and paste the project's `SUPABASE_URL` and `SUPABASE_ANON_KEY`:
 
-```properties
-SUPABASE_URL=https://your-project-ref.supabase.co
+```env
+SUPABASE_URL=your-supabase-project-url
 SUPABASE_ANON_KEY=your-supabase-anon-key
 ```
 
-> **Note for groupmates:** Ask a teammate for the shared `SUPABASE_URL` and `SUPABASE_ANON_KEY` values. **Never commit `supabase.properties` to Git** (it is already ignored in `.gitignore`). You can also provide `SUPABASE_URL` and `SUPABASE_ANON_KEY` as environment variables instead of a file.
+> **Note for groupmates:** Ask a teammate for the shared `SUPABASE_URL` and `SUPABASE_ANON_KEY` values. **Never commit `.env` to Git** (it is already ignored in `.gitignore`). You can also set `SUPABASE_URL` and `SUPABASE_ANON_KEY` directly as system environment variables instead of using a `.env` file.
 
 ### Step 3: Build & Run
 
@@ -82,7 +82,7 @@ mvn clean package
 java -jar target/beenewed-standalone.jar
 ```
 
-> Make sure `supabase.properties` is in the folder where you run `java -jar` (or set `SUPABASE_URL` and `SUPABASE_ANON_KEY` as environment variables).
+> Make sure `.env` is in the folder where you run `java -jar` (or set `SUPABASE_URL` and `SUPABASE_ANON_KEY` as environment variables).
 
 ### First-Time Sign Up
 
