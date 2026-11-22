@@ -161,7 +161,7 @@ public final class UI {
         private boolean hover;
         public void setKind(Kind k) {
             kind = k;
-            setForeground(k == Kind.PRIMARY || k == Kind.DANGER ? Color.WHITE : k == Kind.LINK ? Theme.LINK : Theme.TEXT);
+            setForeground(k == Kind.PRIMARY ? Theme.ON_PRIMARY : k == Kind.DANGER ? Color.WHITE : k == Kind.LINK ? Theme.LINK : k == Kind.SOFT ? Theme.ACCENT : Theme.TEXT);
             repaint();
         }
         public Btn(String text, Icons.Type icon, Kind kind) {
@@ -174,9 +174,10 @@ public final class UI {
             setOpaque(false);
             setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
             setForeground(switch (kind) {
-                case PRIMARY, DANGER -> Color.WHITE;
+                case PRIMARY -> Theme.ON_PRIMARY;
+                case DANGER -> Color.WHITE;
                 case LINK -> Theme.LINK;
-                case SOFT -> Theme.PRIMARY;
+                case SOFT -> Theme.ACCENT;
                 default -> Theme.TEXT;
             });
             if (icon != null) {
@@ -203,13 +204,13 @@ public final class UI {
             boolean on = isEnabled();
             switch (kind) {
                 case PRIMARY -> { g.setColor(!on ? Theme.BORDER_STRONG : hover ? Theme.PRIMARY_HOVER : Theme.PRIMARY); g.fill(r); }
-                case DANGER  -> { g.setColor(hover ? new Color(0x991B1B) : Theme.RED_DARK); g.fill(r); }
+                case DANGER  -> { g.setColor(hover ? Theme.RED_HOVER : Theme.RED_DARK); g.fill(r); }
                 case SECONDARY -> {
-                    g.setColor(hover ? Theme.SUBTLE : Color.WHITE); g.fill(r);
+                    g.setColor(hover ? Theme.SUBTLE : Theme.SURFACE); g.fill(r);
                     g.setColor(Theme.BORDER_STRONG); g.draw(r);
                 }
                 case GHOST -> { if (hover) { g.setColor(Theme.SUBTLE); g.fill(r); } }
-                case SOFT  -> { g.setColor(hover ? new Color(0xDCE7FD) : Theme.PRIMARY_LIGHT); g.fill(r); }
+                case SOFT  -> { g.setColor(hover ? Theme.SOFT_HOVER : Theme.PRIMARY_LIGHT); g.fill(r); }
                 case LINK  -> { }
             }
             g.dispose();
@@ -304,7 +305,7 @@ public final class UI {
         Graphics2D g = (Graphics2D) g0.create();
         aa(g);
         boolean err = Boolean.TRUE.equals(c.getClientProperty("error"));
-        g.setColor(!c.isEnabled() ? Theme.SUBTLE : err ? Theme.RED_BG : Color.WHITE);
+        g.setColor(!c.isEnabled() ? Theme.SUBTLE : err ? Theme.RED_BG : Theme.FIELD_BG);
         g.fill(new RoundRectangle2D.Double(0, 0, c.getWidth() - 1, c.getHeight() - 1, 8, 8));
         g.dispose();
     }
@@ -405,7 +406,7 @@ public final class UI {
             boolean err = Boolean.TRUE.equals(getClientProperty("error"));
             prefix.setForeground(err ? Theme.RED : Theme.MUTED);
             Graphics2D g2 = (Graphics2D) g.create();
-            g2.setColor(err ? new Color(0xF5B5B5) : Theme.BORDER);
+            g2.setColor(err ? Theme.ERR_DIVIDER : Theme.BORDER);
             int x = prefix.getWidth();
             g2.drawLine(x, 1, x, getHeight() - 2);
             g2.dispose();
@@ -423,7 +424,7 @@ public final class UI {
             super(items);
             setFont(Theme.BODY);
             setForeground(Theme.TEXT);
-            setBackground(Color.WHITE);
+            setBackground(Theme.FIELD_BG);
             setOpaque(false);
             setBorder(new FieldBorder(4, 6));
             setUI(new BasicComboBoxUI() {
@@ -447,7 +448,7 @@ public final class UI {
                     l.setFont(Theme.BODY);
                     l.setBorder(new EmptyBorder(6, 8, 6, 8));
                     if (index == -1) { l.setOpaque(false); l.setForeground(Combo.this.isEnabled() ? Theme.TEXT : Theme.MUTED); }
-                    else { l.setBackground(sel ? Theme.PRIMARY_LIGHT : Color.WHITE); l.setForeground(sel ? Theme.PRIMARY : Theme.TEXT); }
+                    else { l.setBackground(sel ? Theme.PRIMARY_LIGHT : Theme.ELEVATED); l.setForeground(sel ? Theme.ACCENT : Theme.TEXT); }
                     return l;
                 }
             });
@@ -492,6 +493,57 @@ public final class UI {
             g.setColor(Color.WHITE);
             int d = h - 4;
             g.fillOval(on ? w - d - 2 : 2, 2, d, d);
+            g.dispose();
+        }
+    }
+
+    /**
+     * Compact Light/Dark switch for the header: a pill with a sun (Light) and a moon (Dark).
+     * The highlighted knob sits behind the active mode; clicking (or Space/Enter) flips it.
+     */
+    public static class ThemeSwitch extends JComponent {
+        private final boolean dark;
+        private boolean hover;
+        public ThemeSwitch(boolean dark, Consumer<Boolean> onChange) {
+            this.dark = dark;
+            setPreferredSize(new Dimension(64, 32));
+            setMaximumSize(getPreferredSize());
+            setMinimumSize(getPreferredSize());
+            setFocusable(true);
+            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            setToolTipText(dark ? "Dark mode is on \u2014 switch to Light mode" : "Light mode is on \u2014 switch to Dark mode");
+            addMouseListener(new MouseAdapter() {
+                public void mouseClicked(MouseEvent e) { SwingUtilities.invokeLater(() -> onChange.accept(!ThemeSwitch.this.dark)); }
+                public void mouseEntered(MouseEvent e) { hover = true; repaint(); }
+                public void mouseExited(MouseEvent e) { hover = false; repaint(); }
+            });
+            addKeyListener(new KeyAdapter() {
+                public void keyPressed(KeyEvent e) {
+                    if (e.getKeyCode() == KeyEvent.VK_SPACE || e.getKeyCode() == KeyEvent.VK_ENTER)
+                        SwingUtilities.invokeLater(() -> onChange.accept(!ThemeSwitch.this.dark));
+                }
+            });
+            addFocusListener(new FocusAdapter() {
+                public void focusGained(FocusEvent e) { repaint(); }
+                public void focusLost(FocusEvent e) { repaint(); }
+            });
+        }
+        @Override protected void paintComponent(Graphics g0) {
+            Graphics2D g = (Graphics2D) g0.create();
+            aa(g);
+            int w = getWidth(), h = getHeight();
+            g.setColor(hover ? Theme.TABLE_HEAD : Theme.SUBTLE);
+            g.fillRoundRect(0, 0, w - 1, h - 1, h, h);
+            g.setColor(isFocusOwner() ? Theme.PRIMARY : Theme.BORDER_STRONG);
+            g.drawRoundRect(0, 0, w - 1, h - 1, h, h);
+            int d = h - 6, knobX = dark ? w - d - 3 : 3;
+            g.setColor(Theme.PRIMARY);
+            g.fillOval(knobX, 3, d, d);
+            int is = 15;
+            Icon sun = Icons.of(Icons.Type.SUN, is, dark ? Theme.MUTED : Theme.ON_PRIMARY);
+            Icon moon = Icons.of(Icons.Type.MOON, is, dark ? Theme.ON_PRIMARY : Theme.MUTED);
+            sun.paintIcon(this, g, 3 + (d - is) / 2, (h - is) / 2);
+            moon.paintIcon(this, g, w - d - 3 + (d - is) / 2, (h - is) / 2);
             g.dispose();
         }
     }
@@ -549,9 +601,9 @@ public final class UI {
             for (int i = 0; i < items.size(); i++) {
                 boolean s = i == selected;
                 JLabel l = items.get(i);
-                l.setForeground(s ? Theme.PRIMARY : Theme.MUTED);
+                l.setForeground(s ? Theme.ACCENT : Theme.MUTED);
                 l.setFont(s ? Theme.BODY_B : Theme.BODY);
-                if (icons.get(i) != null) l.setIcon(Icons.of(icons.get(i), 15, s ? Theme.PRIMARY : Theme.MUTED));
+                if (icons.get(i) != null) l.setIcon(Icons.of(icons.get(i), 15, s ? Theme.ACCENT : Theme.MUTED));
             }
         }
         @Override protected void paintChildren(Graphics g0) {
@@ -582,7 +634,7 @@ public final class UI {
                     @Override protected void paintComponent(Graphics g0) {
                         if (idx == selected) {
                             Graphics2D g = (Graphics2D) g0.create(); aa(g);
-                            g.setColor(Color.WHITE); g.fillRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 8, 8);
+                            g.setColor(Theme.isDark() ? Theme.ELEVATED : Theme.SURFACE); g.fillRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 8, 8);
                             g.setColor(Theme.BORDER); g.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 8, 8);
                             g.dispose();
                         }
@@ -602,7 +654,7 @@ public final class UI {
         public void select(int i) {
             selected = i;
             for (int k = 0; k < opts.length; k++) {
-                opts[k].setForeground(k == i ? Theme.PRIMARY : Theme.TEXT_2);
+                opts[k].setForeground(k == i ? Theme.ACCENT : Theme.TEXT_2);
                 opts[k].setFont(k == i ? Theme.SMALL_B : Theme.SMALL);
             }
             repaint();
@@ -627,7 +679,7 @@ public final class UI {
     }
 
     public static class ThinScrollBarUI extends BasicScrollBarUI {
-        @Override protected void configureScrollBarColors() { thumbColor = new Color(0xCBD5E1); trackColor = new Color(0, 0, 0, 0); }
+        @Override protected void configureScrollBarColors() { thumbColor = Theme.SCROLL_THUMB; trackColor = new Color(0, 0, 0, 0); }
         @Override protected JButton createDecreaseButton(int o) { return zero(); }
         @Override protected JButton createIncreaseButton(int o) { return zero(); }
         private JButton zero() { JButton b = new JButton(); b.setPreferredSize(new Dimension(0, 0)); return b; }

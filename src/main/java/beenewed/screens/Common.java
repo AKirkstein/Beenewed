@@ -60,7 +60,7 @@ public final class Common {
     /** Card heading: optional icon + bold title, with a muted subtitle below. */
     public static JComponent cardHeading(Icons.Type icon, String title, String subtitle) {
         JLabel t = UI.h2(title);
-        if (icon != null) { t.setIcon(Icons.of(icon, 17, Theme.PRIMARY)); t.setIconTextGap(8); }
+        if (icon != null) { t.setIcon(Icons.of(icon, 17, Theme.ACCENT)); t.setIconTextGap(8); }
         if (subtitle == null) return t;
         return UI.vstack(4, t, UI.label(subtitle, Theme.SMALL, Theme.MUTED));
     }

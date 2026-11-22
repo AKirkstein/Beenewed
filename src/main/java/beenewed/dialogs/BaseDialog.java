@@ -40,17 +40,17 @@ public abstract class BaseDialog extends JDialog {
             try { setBackground(new Color(0, 0, 0, 0)); } catch (Exception ignored) { }
         }
 
-        UI.RoundPanel card = new UI.RoundPanel(new BorderLayout(), 14, Color.WHITE, Theme.BORDER_STRONG);
+        UI.RoundPanel card = new UI.RoundPanel(new BorderLayout(), 14, Theme.ELEVATED, Theme.BORDER_STRONG);
 
         // Header
         JPanel header = UI.clear(new BorderLayout(10, 0));
         header.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Theme.BORDER), new EmptyBorder(18, 22, 14, 16)));
         JLabel t = UI.label(title, Theme.H2.deriveFont(18f), Theme.TEXT);
-        if (titleIcon != null && !iconTile) { t.setIcon(Icons.of(titleIcon, 18, Theme.PRIMARY)); t.setIconTextGap(8); }
+        if (titleIcon != null && !iconTile) { t.setIcon(Icons.of(titleIcon, 18, Theme.ACCENT)); t.setIconTextGap(8); }
         JComponent titleBlock = subtitle == null ? t : UI.vstack(4, t, UI.label(subtitle, iconTile ? Theme.SMALL : Theme.BODY, Theme.MUTED));
         if (titleIcon != null && iconTile) {
             UI.RoundPanel tile = new UI.RoundPanel(new GridBagLayout(), 10, Theme.PRIMARY_LIGHT, null);
-            tile.add(new JLabel(Icons.of(titleIcon, 18, Theme.PRIMARY)));
+            tile.add(new JLabel(Icons.of(titleIcon, 18, Theme.ACCENT)));
             tile.setPreferredSize(new Dimension(36, 36));
             JPanel tw = UI.clear(new GridBagLayout()); tw.add(tile);
             JPanel row = UI.clear(new BorderLayout(12, 0));
@@ -76,10 +76,10 @@ public abstract class BaseDialog extends JDialog {
         // Body
         body = new UI.ScrollablePage(null);
         body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
-        body.setBackground(Color.WHITE);
+        body.setBackground(Theme.ELEVATED);
         body.setBorder(new EmptyBorder(16, 22, 18, 22));
         JScrollPane sp = UI.scroll(body);
-        sp.getViewport().setBackground(Color.WHITE);
+        sp.getViewport().setBackground(Theme.ELEVATED);
         sp.setOpaque(false);
         card.add(sp, BorderLayout.CENTER);
 
@@ -102,7 +102,7 @@ public abstract class BaseDialog extends JDialog {
         JPanel footer = new JPanel(new BorderLayout()) {
             @Override protected void paintComponent(Graphics g0) {
                 Graphics2D g = (Graphics2D) g0.create(); UI.aa(g);
-                g.setColor(new Color(0xF8FAFC));
+                g.setColor(Theme.FOOTER_BG);
                 g.clip(new RoundRectangle2D.Double(1, -20, getWidth() - 2, getHeight() + 19, 14, 14));
                 g.fillRect(0, 0, getWidth(), getHeight());
                 g.dispose();
@@ -193,8 +193,8 @@ public abstract class BaseDialog extends JDialog {
 
     /** Label row: "Name *" or "Name (Optional)", with optional right-aligned hint. */
     protected static JComponent fieldLabel(String text, boolean required, String optionalNote, String rightHint) {
-        String html = "<html><b>" + text + "</b>" + (required ? " <span style='color:#DC2626'>*</span>" : "")
-                + (optionalNote != null ? " <span style='color:#64748B'>" + optionalNote + "</span>" : "") + "</html>";
+        String html = "<html><b>" + text + "</b>" + (required ? " <span style='color:" + Theme.hex(Theme.RED) + "'>*</span>" : "")
+                + (optionalNote != null ? " <span style='color:" + Theme.hex(Theme.MUTED) + "'>" + optionalNote + "</span>" : "") + "</html>";
         JLabel l = UI.label(html, Theme.BODY, Theme.TEXT);
         if (rightHint == null) return l;
         return UI.split(l, UI.label(rightHint, Theme.SMALL, Theme.MUTED));
@@ -267,9 +267,9 @@ public abstract class BaseDialog extends JDialog {
         p.setBorder(new EmptyBorder(10, 12, 10, 12));
         p.add(UI.iconBox(s.icon, 28, 15), BorderLayout.WEST);
         JComponent nameRow = showStatus ? UI.hrow(6, UI.label(s.name, Theme.BODY_B, Theme.TEXT), Common.statusBadge(s.status))
-                : UI.label("<html><span style='color:#64748B'>Subscription:</span> <b>" + s.name + "</b></html>", Theme.BODY, Theme.TEXT);
+                : UI.label("<html><span style='color:" + Theme.hex(Theme.MUTED) + "'>Subscription:</span> <b>" + s.name + "</b></html>", Theme.BODY, Theme.TEXT);
         p.add(UI.vstack(2, nameRow, UI.label(showStatus ? "Category: " + s.category : s.category, Theme.SMALL, Theme.MUTED)), BorderLayout.CENTER);
-        UI.Pill linked = new UI.Pill("Linked", Theme.TEXT_2, Color.WHITE, null, 6);
+        UI.Pill linked = new UI.Pill("Linked", Theme.TEXT_2, Theme.SURFACE, null, 6);
         linked.setIcon(Icons.of(Icons.Type.LOCK, 11, Theme.MUTED));
         linked.setBorder(new EmptyBorder(3, 6, 3, 8));
         JPanel lw = UI.clear(new GridBagLayout()); lw.add(linked);
@@ -279,7 +279,7 @@ public abstract class BaseDialog extends JDialog {
     }
 
     protected static JComponent infoNote(String html, boolean blue) {
-        JComponent n = UI.note(Icons.Type.INFO, blue ? Theme.INFO_BG : Theme.SUBTLE, blue ? Theme.PRIMARY : Theme.MUTED, null, html, 320);
+        JComponent n = UI.note(Icons.Type.INFO, blue ? Theme.INFO_BG : Theme.SUBTLE, blue ? Theme.ACCENT : Theme.MUTED, null, html, 320);
         n.setMaximumSize(new Dimension(Integer.MAX_VALUE, n.getPreferredSize().height));
         return n;
     }

@@ -66,7 +66,7 @@ public class DateField extends JPanel {
     private void rebuild() {
         popup.removeAll();
         JPanel p = new JPanel(new BorderLayout(0, 8));
-        p.setBackground(Color.WHITE);
+        p.setBackground(Theme.ELEVATED);
         p.setBorder(new EmptyBorder(10, 10, 10, 10));
 
         JButton prev = navButton(Icons.Type.CHEVRON_LEFT, () -> { shown = shown.minusMonths(1); rebuild(); popup.pack(); popup.repaint(); });
@@ -97,8 +97,8 @@ public class DateField extends JPanel {
             b.setFocusPainted(false);
             b.setBorder(new EmptyBorder(5, 7, 5, 7));
             boolean isSel = date.equals(sel);
-            b.setBackground(isSel ? Theme.PRIMARY : date.equals(today) ? Theme.PRIMARY_LIGHT : Color.WHITE);
-            b.setForeground(isSel ? Color.WHITE : Theme.TEXT);
+            b.setBackground(isSel ? Theme.PRIMARY : date.equals(today) ? Theme.PRIMARY_LIGHT : Theme.ELEVATED);
+            b.setForeground(isSel ? Theme.ON_PRIMARY : Theme.TEXT);
             b.setOpaque(true);
             b.setBorderPainted(false);
             b.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));

@@ -14,7 +14,7 @@ public final class Icons {
         // navigation / UI
         DASHBOARD, CARD, CALENDAR, CHART, GEAR, PLUS, SEARCH, BELL, HISTORY, INFO, PENCIL, SWAP,
         CLOSE, CHECK, CHEVRON_DOWN, CHEVRON_UP, CHEVRON_LEFT, CHEVRON_RIGHT, ARROW_RIGHT, RECEIPT, USERS, USER_PLUS, CASH, LOCK,
-        FILTER, CLOCK, DOTS, X_CIRCLE, SAVE, EXTERNAL, ALERT, CHECK_CIRCLE, SLIDERS, WALLET, TRASH, LIST,
+        FILTER, CLOCK, DOTS, X_CIRCLE, SUN, MOON, USER, SAVE, EXTERNAL, ALERT, CHECK_CIRCLE, SLIDERS, WALLET, TRASH, LIST,
         // subscription icons (16 generic icons from the icon selector)
         TELEVISION, COMPUTER, AUDIO, MUSIC, GAMING, CLOUD, EDUCATION, WORK, MOVIES, MOBILE, INTERNET,
         UTILITIES, DESIGN, SECURITY, SHOPPING, OTHER
@@ -106,6 +106,19 @@ public final class Icons {
             }
             case INFO -> { circ(g, 12, 12, 9); ln(g, 12, 11, 12, 16.5); dot(g, 12, 7.8, 1.1); }
             case ALERT -> { circ(g, 12, 12, 9); ln(g, 12, 7.5, 12, 13); dot(g, 12, 16.3, 1.1); }
+            case SUN -> {
+                circ(g, 12, 12, 4);
+                for (int i = 0; i < 8; i++) {
+                    double a = Math.PI / 4 * i;
+                    ln(g, 12 + Math.cos(a) * 7, 12 + Math.sin(a) * 7, 12 + Math.cos(a) * 9.5, 12 + Math.sin(a) * 9.5);
+                }
+            }
+            case MOON -> {
+                java.awt.geom.Area moon = new java.awt.geom.Area(new Ellipse2D.Double(3.5, 3.5, 17, 17));
+                moon.subtract(new java.awt.geom.Area(new Ellipse2D.Double(9, 0.5, 15, 15)));
+                g.draw(moon);
+            }
+            case USER -> { circ(g, 12, 8.5, 4); g.draw(new Arc2D.Double(4.5, 14, 15, 14, 0, 180, Arc2D.OPEN)); }
             case X_CIRCLE -> { circ(g, 12, 12, 9); ln(g, 9, 9, 15, 15); ln(g, 15, 9, 9, 15); }
             case CHECK_CIRCLE -> { circ(g, 12, 12, 9); poly(g, 8, 12.3, 10.8, 15, 16, 9.5); }
             case PENCIL -> { poly(g, 4, 20, 4.8, 15.8, 15.5, 5.1, 18.9, 8.5, 8.2, 19.2, 4, 20); ln(g, 13.3, 7.3, 16.7, 10.7); }

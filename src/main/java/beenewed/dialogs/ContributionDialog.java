@@ -46,7 +46,7 @@ public class ContributionDialog extends BaseDialog {
         fAmount = new Field("Amount Received", true, null, amount, "Actual amount received from member.");
         fDate = new Field("Date Received", true, null, date, "Date the funds were received.");
         place(pair(fAmount, fDate)); gap(12);
-        place(infoNote("<b style='color:#0F172A'>Note:</b> Contributions represent received member reimbursements and are recorded separately from subscription payments. They do not increase actual spending or alter subscription prices.", false));
+        place(infoNote("<b style='color:" + Theme.hex(Theme.TEXT) + "'>Note:</b> Contributions represent received member reimbursements and are recorded separately from subscription payments. They do not increase actual spending or alter subscription prices.", false));
 
         if (c != null) {
             member.setSelectedItem(c.member);

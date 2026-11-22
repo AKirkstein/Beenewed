@@ -48,7 +48,7 @@ public class SubscriptionDialog extends BaseDialog {
         gap(8);
         UI.RoundPanel current = new UI.RoundPanel(new BorderLayout(12, 0), 10, Theme.SUBTLE, Theme.BORDER);
         current.setBorder(new EmptyBorder(9, 10, 9, 10));
-        UI.RoundPanel box = new UI.RoundPanel(new GridBagLayout(), 8, Color.WHITE, Theme.BORDER);
+        UI.RoundPanel box = new UI.RoundPanel(new GridBagLayout(), 8, Theme.SURFACE, Theme.BORDER);
         box.setPreferredSize(new Dimension(32, 32));
         box.add(iconPreview);
         current.add(box, BorderLayout.WEST);
@@ -59,7 +59,7 @@ public class SubscriptionDialog extends BaseDialog {
         place(current);
         changeIcon.addActionListener(e -> toggleSelector());
 
-        UI.RoundPanel sel = new UI.RoundPanel(new BorderLayout(0, 10), 10, Color.WHITE, Theme.BORDER);
+        UI.RoundPanel sel = new UI.RoundPanel(new BorderLayout(0, 10), 10, Theme.SURFACE, Theme.BORDER);
         sel.setBorder(new EmptyBorder(12, 12, 10, 12));
         JLabel selTitle = UI.label("Select Icon", Theme.SMALL_B, Theme.TEXT);
         selTitle.setIcon(Icons.of(Icons.Type.DASHBOARD, 13, Theme.TEXT_2));
@@ -83,11 +83,11 @@ public class SubscriptionDialog extends BaseDialog {
         fPrice = new Field("Subscription Price", true, null, price, "Amount in Philippine Peso (PHP)");
         fDate = new Field("Next Renewal Date", true, null, renewal, "e.g., " + Theme.date(Store.today().plusDays(7)));
         place(pair(fPrice, fDate)); gap(14);
-        place(infoNote("<b style='color:#0F172A'>Note:</b> Once created, price updates should be logged via <b style='color:#0F172A'>Record Price Change</b> to maintain historical records.", false));
+        place(infoNote("<b style='color:" + Theme.hex(Theme.TEXT) + "'>Note:</b> Once created, price updates should be logged via <b style='color:" + Theme.hex(Theme.TEXT) + "'>Record Price Change</b> to maintain historical records.", false));
 
         category.addActionListener(e -> {
             if (!iconCustom) setIcon(Models.defaultIcon(categoryValue()));
-            categoryDefault.setText("<html>Category default: <b style='color:#0F172A'>" + Icons.label(Models.defaultIcon(categoryValue())) + "</b></html>");
+            categoryDefault.setText("<html>Category default: <b style='color:" + Theme.hex(Theme.TEXT) + "'>" + Icons.label(Models.defaultIcon(categoryValue())) + "</b></html>");
             if (category.getSelectedIndex() > 0) fCategory.error(null);
         });
 
@@ -96,8 +96,8 @@ public class SubscriptionDialog extends BaseDialog {
             category.setSelectedItem(s.category);
             cycle.setSelectedItem(s.cycle);
             price.setText(Theme.num(s.price).replace(",", ""));
-            renewal.setDate(s.nextRenewal);
             price.setEnabled(false);
+            renewal.setDate(s.nextRenewal);
             iconCustom = s.icon != Models.defaultIcon(s.category);
             setIcon(s.icon);
             // In edit mode the price is managed through Record Price Change
@@ -105,7 +105,7 @@ public class SubscriptionDialog extends BaseDialog {
         } else {
             setIcon(Icons.Type.TELEVISION);
         }
-        categoryDefault.setText("<html>Category default: <b style='color:#0F172A'>" + Icons.label(Models.defaultIcon(categoryValue())) + "</b></html>");
+        categoryDefault.setText("<html>Category default: <b style='color:" + Theme.hex(Theme.TEXT) + "'>" + Icons.label(Models.defaultIcon(categoryValue())) + "</b></html>");
         buildGrid();
     }
 
@@ -130,9 +130,9 @@ public class SubscriptionDialog extends BaseDialog {
         for (Icons.Type t : Icons.SUBSCRIPTION_ICONS) {
             boolean selected = t == icon;
             UI.RoundPanel cell = new UI.RoundPanel(new FlowLayout(FlowLayout.LEFT, 8, 6), 6,
-                    selected ? Theme.PRIMARY_LIGHT : Color.WHITE, selected ? Theme.PRIMARY : Theme.BORDER);
-            JLabel l = UI.label(Icons.label(t), selected ? Theme.SMALL_B : Theme.SMALL, selected ? Theme.PRIMARY : Theme.TEXT_2);
-            l.setIcon(Icons.of(t, 14, selected ? Theme.PRIMARY : Theme.TEXT_2));
+                    selected ? Theme.PRIMARY_LIGHT : Theme.SURFACE, selected ? Theme.PRIMARY : Theme.BORDER);
+            JLabel l = UI.label(Icons.label(t), selected ? Theme.SMALL_B : Theme.SMALL, selected ? Theme.ACCENT : Theme.TEXT_2);
+            l.setIcon(Icons.of(t, 14, selected ? Theme.ACCENT : Theme.TEXT_2));
             l.setIconTextGap(7);
             cell.add(l);
             cell.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));

@@ -72,7 +72,7 @@ public class DataTable extends JPanel {
             }
             @Override public Dimension getMaximumSize() { return new Dimension(Integer.MAX_VALUE, getPreferredSize().height); }
             @Override protected void paintComponent(Graphics g) {
-                g.setColor(hover ? new Color(0xF8FAFD) : Color.WHITE);
+                g.setColor(hover ? Theme.ROW_HOVER : Theme.SURFACE);
                 g.fillRect(0, 0, getWidth(), getHeight());
                 g.setColor(Theme.BORDER);
                 g.fillRect(0, getHeight() - 1, getWidth(), 1);
@@ -114,7 +114,7 @@ public class DataTable extends JPanel {
 
     public void setEmpty(String message) {
         JPanel p = new JPanel(new GridBagLayout());
-        p.setBackground(Color.WHITE);
+        p.setBackground(Theme.SURFACE);
         p.setBorder(new EmptyBorder(26, 12, 26, 12));
         p.add(UI.label(message, Theme.BODY, Theme.MUTED));
         p.setAlignmentX(0f);

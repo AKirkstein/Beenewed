@@ -10,19 +10,13 @@ import javax.swing.border.EmptyBorder;
 import java.awt.*;
 
 /**
- * D7 / D7-B / D7-C — Change Subscription Status.
+ * D7 / D7-B / D7-C \u2014 Change Subscription Status.
  * The "Review Status Change" panel follows the Figma frames:
  *   Paused    -> amber panel,  "Confirm Change"
  *   Active    -> blue panel with Renewal Date Reminder, "Confirm Reactivation"
  *   Cancelled -> red panel,    "Confirm Cancellation"
  */
 public class StatusDialog extends BaseDialog {
-    private static final Color AMBER_PANEL  = new Color(0xFFFAF0);
-    private static final Color AMBER_TITLE  = new Color(0xB45309);
-    private static final Color BLUE_PANEL   = new Color(0xF5F8FD);
-    private static final Color BLUE_BORDER  = new Color(0xDCE5F2);
-    private static final Color RED_PANEL    = new Color(0xFEF2F2);
-    private static final Color RED_BORDER   = new Color(0xF8C4C4);
 
     private final Subscription sub;
     private final UI.Combo<Status> status;
@@ -39,14 +33,14 @@ public class StatusDialog extends BaseDialog {
         // Subscription context card
         UI.RoundPanel ctx = new UI.RoundPanel(new BorderLayout(10, 0), 8, Theme.SUBTLE, null);
         ctx.setBorder(new EmptyBorder(10, 10, 10, 12));
-        UI.RoundPanel box = new UI.RoundPanel(new GridBagLayout(), 6, Color.WHITE, Theme.BORDER);
+        UI.RoundPanel box = new UI.RoundPanel(new GridBagLayout(), 6, Theme.SURFACE, Theme.BORDER);
         box.add(new JLabel(Icons.of(sub.icon, 15, Theme.TEXT)));
         box.setPreferredSize(new Dimension(26, 26));
         JPanel bw = UI.clear(new GridBagLayout()); bw.add(box);
         ctx.add(bw, BorderLayout.WEST);
         ctx.add(UI.vstack(2,
-                UI.label("<html><span style='color:#64748B'>Subscription:</span> <b>" + sub.name + "</b></html>", Theme.SMALL, Theme.TEXT),
-                UI.label("<html><b>" + sub.category + "</b> <span style='color:#64748B'>• " + Theme.peso(sub.price) + " " + sub.perLabel() + "</span></html>", Theme.TINY, Theme.TEXT)),
+                UI.label("<html><span style='color:" + Theme.hex(Theme.MUTED) + "'>Subscription:</span> <b>" + sub.name + "</b></html>", Theme.SMALL, Theme.TEXT),
+                UI.label("<html><b>" + sub.category + "</b> <span style='color:" + Theme.hex(Theme.MUTED) + "'>\u2022 " + Theme.peso(sub.price) + " " + sub.perLabel() + "</span></html>", Theme.TINY, Theme.TEXT)),
                 BorderLayout.CENTER);
         JPanel sw = UI.clear(new GridBagLayout()); sw.add(Common.statusBadge(sub.status));
         ctx.add(sw, BorderLayout.EAST);
@@ -75,12 +69,12 @@ public class StatusDialog extends BaseDialog {
             primaryBtn.setEnabled(false);
             primaryBtn.setKind(UI.Kind.PRIMARY);
             primaryBtn.setText("Confirm Change");
-            primaryBtn.setIcon(Icons.of(Icons.Type.CHECK, 15, Color.WHITE));
+            primaryBtn.setIcon(Icons.of(Icons.Type.CHECK, 15, Theme.ON_PRIMARY));
         } else {
             primaryBtn.setEnabled(true);
             switch (s) {
                 case PAUSED -> {
-                    review.add(panel(AMBER_PANEL, null, AMBER_TITLE, Icons.Type.INFO,
+                    review.add(panel(Theme.AMBER_PANEL, null, Theme.AMBER, Icons.Type.INFO,
                             "Pausing this subscription excludes it from active recurring-cost estimates and upcoming renewal reminders. "
                                     + "Existing payment, usage, sharing, and price-history records will be preserved.",
                             null,
@@ -89,7 +83,7 @@ public class StatusDialog extends BaseDialog {
                     setPrimary("Confirm Change", Icons.Type.CHECK, UI.Kind.PRIMARY);
                 }
                 case CANCELLED -> {
-                    review.add(panel(RED_PANEL, RED_BORDER, Theme.RED_DARK, Icons.Type.ALERT,
+                    review.add(panel(Theme.RED_BG, Theme.RED_BORDER, Theme.RED, Icons.Type.ALERT,
                             "Cancelling this subscription excludes it from active recurring-cost estimates and upcoming renewal reminders. "
                                     + "Existing payment, sharing, usage, and price-history records will be preserved.",
                             null,
@@ -98,7 +92,7 @@ public class StatusDialog extends BaseDialog {
                     setPrimary("Confirm Cancellation", Icons.Type.X_CIRCLE, UI.Kind.DANGER);
                 }
                 default -> {
-                    review.add(panel(BLUE_PANEL, BLUE_BORDER, Theme.PRIMARY, Icons.Type.INFO,
+                    review.add(panel(Theme.INFO_BG, Theme.INFO_BORDER, Theme.ACCENT, Icons.Type.INFO,
                             "Reactivating this subscription includes it in active recurring-cost estimates and eligible upcoming renewal reminders. "
                                     + "Existing payment, sharing, usage, and price-history records remain unchanged.",
                             renewalReminder(),
@@ -115,7 +109,7 @@ public class StatusDialog extends BaseDialog {
     private void setPrimary(String text, Icons.Type icon, UI.Kind kind) {
         primaryBtn.setKind(kind);
         primaryBtn.setText(text);
-        primaryBtn.setIcon(Icons.of(icon, 15, Color.WHITE));
+        primaryBtn.setIcon(Icons.of(icon, 15, kind == UI.Kind.DANGER ? Color.WHITE : Theme.ON_PRIMARY));
     }
 
     /**
@@ -148,12 +142,12 @@ public class StatusDialog extends BaseDialog {
 
     /** Inner white card shown when reactivating. */
     private JComponent renewalReminder() {
-        UI.RoundPanel c = new UI.RoundPanel(new BorderLayout(8, 0), 6, Color.WHITE, Theme.BORDER);
+        UI.RoundPanel c = new UI.RoundPanel(new BorderLayout(8, 0), 6, Theme.SURFACE, Theme.BORDER);
         c.setBorder(new EmptyBorder(10, 10, 10, 10));
-        JLabel ic = new JLabel(Icons.of(Icons.Type.CALENDAR, 14, Theme.PRIMARY));
+        JLabel ic = new JLabel(Icons.of(Icons.Type.CALENDAR, 14, Theme.ACCENT));
         ic.setVerticalAlignment(SwingConstants.TOP);
         c.add(ic, BorderLayout.WEST);
-        JTextPane text = htmlText("Review the next renewal date before confirming reactivation. Current renewal date: <b style='color:#0F172A'>"
+        JTextPane text = htmlText("Review the next renewal date before confirming reactivation. Current renewal date: <b style='color:" + Theme.hex(Theme.TEXT) + "'>"
                 + Theme.date(sub.nextRenewal) + "</b>. (You can update the renewal date anytime via Edit Subscription.)", Theme.TINY, Theme.MUTED);
         JPanel col = UI.clear(new BorderLayout(0, 3));
         col.add(UI.label("Renewal Date Reminder", Theme.SMALL_B, Theme.TEXT), BorderLayout.NORTH);

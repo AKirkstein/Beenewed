@@ -187,6 +187,25 @@ public final class Store {
         });
     }
 
+    public com.beenewed.backend.model.Theme getTheme() {
+        return withBackend(() -> backend.getAppPreferencesService().get().theme());
+    }
+
+    public void saveTheme(boolean dark) {
+        withBackend(() -> {
+            com.beenewed.backend.model.AppPreferences current = backend.getAppPreferencesService().get();
+            backend.getAppPreferencesService().update(new com.beenewed.backend.model.AppPreferences(
+                    1L,
+                    current.currency(),
+                    dark
+                            ? com.beenewed.backend.model.Theme.DARK
+                            : com.beenewed.backend.model.Theme.LIGHT,
+                    current.reminderLeadDays(),
+                    current.showOverdueReminders()));
+            return null;
+        });
+    }
+
     public List<Subscription> findSubscriptions(String search, String category, Status status) {
         return withBackend(() -> {
             com.beenewed.backend.model.SubscriptionStatus backendStatus = status == null

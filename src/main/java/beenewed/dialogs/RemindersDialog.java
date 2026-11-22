@@ -19,7 +19,6 @@ public class RemindersDialog extends BaseDialog {
                 "Open Renewals & Payments", Icons.Type.ARROW_RIGHT, 720);
         cancelBtn.setText("Close");
         Store st = Store.get();
-        var summary = st.dashboardSummary();
 
         UI.RoundPanel info = new UI.RoundPanel(new BorderLayout(), 8, Theme.SUBTLE, Theme.BORDER);
         info.setBorder(new EmptyBorder(8, 12, 8, 12));
@@ -29,14 +28,14 @@ public class RemindersDialog extends BaseDialog {
         info.setMaximumSize(new Dimension(Integer.MAX_VALUE, info.getPreferredSize().height));
         place(info); gap(16);
 
-        List<Subscription> up = st.upcomingReminders(summary);
+        List<Subscription> up = st.upcomingReminders();
         place(section("Upcoming Renewals", up.size(), "Subscriptions approaching their next renewal date.")); gap(10);
         if (up.isEmpty()) place(empty("No renewals within the next " + st.remindDays + " days."));
         for (Subscription s : up) { place(item(s)); gap(8); }
 
         if (st.showOverdue) {
             gap(12);
-            List<Subscription> od = st.overdue(summary);
+            List<Subscription> od = st.overdue();
             place(section("Overdue Renewals", od.size(), "Saved renewal dates that have already passed. These are scheduled dates, not payment status.")); gap(10);
             if (od.isEmpty()) place(empty("No overdue renewals. You're all caught up."));
             for (Subscription s : od) { place(item(s)); gap(8); }
@@ -51,7 +50,7 @@ public class RemindersDialog extends BaseDialog {
     }
 
     private JComponent item(Subscription s) {
-        UI.RoundPanel p = new UI.RoundPanel(new BorderLayout(12, 0), 10, Color.WHITE, Theme.BORDER);
+        UI.RoundPanel p = new UI.RoundPanel(new BorderLayout(12, 0), 10, Theme.SURFACE, Theme.BORDER);
         p.setBorder(new EmptyBorder(12, 12, 12, 12));
         p.add(UI.iconBox(s.icon, 34, 17), BorderLayout.WEST);
         p.add(UI.vstack(3, UI.label(s.name, Theme.BODY_B, Theme.TEXT),

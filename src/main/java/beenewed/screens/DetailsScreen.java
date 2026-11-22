@@ -19,10 +19,12 @@ public class DetailsScreen extends JPanel {
     public DetailsScreen() { super(new BorderLayout()); setBackground(Theme.BG); }
 
     public void setSubscription(Subscription s, int tab) { this.sub = s; this.tab = tab; }
+    public Subscription getSubscription() { return sub; }
+    public int getTab() { return tab; }
 
     public void refresh() {
         removeAll();
-        if (sub == null || !Store.get().containsSubscription(sub)) {
+        if (sub == null || !Store.get().subscriptions.contains(sub)) {
             // subscription was deleted -> go back to list
             SwingUtilities.invokeLater(() -> App.get().show(App.Screen.SUBSCRIPTIONS));
             return;
@@ -55,7 +57,7 @@ public class DetailsScreen extends JPanel {
         tabs.add("Overview", null, null).add("Payments", null, null).add("Sharing", null, null).add("Usage", null, null).add("Price History", null, null);
         tabs.select(tab, false);
         tabs.onSelect(i -> { tab = i; refresh(); });
-        UI.RoundPanel tabBar = new UI.RoundPanel(new BorderLayout(), 12, Color.WHITE, Theme.BORDER);
+        UI.RoundPanel tabBar = new UI.RoundPanel(new BorderLayout(), 12, Theme.SURFACE, Theme.BORDER);
         tabBar.setBorder(new EmptyBorder(0, 18, 0, 18));
         tabBar.add(tabs, BorderLayout.WEST);
 
@@ -79,11 +81,11 @@ public class DetailsScreen extends JPanel {
         JPanel grid = UI.clear(new GridLayout(3, 2, 24, 16));
         grid.add(prop("Subscription Name", UI.label(sub.name, Theme.BODY_B, Theme.TEXT)));
         grid.add(prop("Category", UI.label(sub.category, Theme.BODY, Theme.TEXT)));
-        grid.add(prop("Current Price", UI.label("<html><b>" + Theme.peso(sub.price) + "</b> <span style='color:#64748B;font-size:90%'>" + sub.perLabel() + "</span></html>", Theme.BODY, Theme.TEXT)));
+        grid.add(prop("Current Price", UI.label("<html><b>" + Theme.peso(sub.price) + "</b> <span style='color:" + Theme.hex(Theme.MUTED) + ";font-size:90%'>" + sub.perLabel() + "</span></html>", Theme.BODY, Theme.TEXT)));
         String sched = sub.cycle == Cycle.MONTHLY ? "(Fixed recurring schedule)" : "(Billed once a year)";
-        grid.add(prop("Billing Cycle", UI.label("<html>" + sub.cycle.label + " <span style='color:#64748B;font-size:90%'>" + sched + "</span></html>", Theme.BODY, Theme.TEXT)));
+        grid.add(prop("Billing Cycle", UI.label("<html>" + sub.cycle.label + " <span style='color:" + Theme.hex(Theme.MUTED) + ";font-size:90%'>" + sched + "</span></html>", Theme.BODY, Theme.TEXT)));
         JLabel date = UI.label(Theme.date(sub.nextRenewal), Theme.BODY_B, Theme.TEXT);
-        date.setIcon(Icons.of(Icons.Type.CALENDAR, 14, Theme.PRIMARY));
+        date.setIcon(Icons.of(Icons.Type.CALENDAR, 14, Theme.ACCENT));
         grid.add(prop("Next Renewal Date", date));
         grid.add(prop("Current Status", Common.statusBadge(sub.status)));
         info.add(grid, BorderLayout.CENTER);
@@ -95,7 +97,7 @@ public class DetailsScreen extends JPanel {
         JLabel ic = new JLabel(Icons.of(Icons.Type.INFO, 16, Theme.MUTED));
         ic.setVerticalAlignment(SwingConstants.TOP);
         note.add(ic, BorderLayout.WEST);
-        note.add(UI.vstack(6, UI.wrap("To update the recurring subscription price while preserving historical records, use <b style='color:#0F172A'>Record Price Change</b> under the Price History tab. Direct edits alter the label only.", 420, Theme.SMALL, Theme.TEXT_2), go), BorderLayout.CENTER);
+        note.add(UI.vstack(6, UI.wrap("To update the recurring subscription price while preserving historical records, use <b style='color:" + Theme.hex(Theme.TEXT) + "'>Record Price Change</b> under the Price History tab. Direct edits alter the label only.", 420, Theme.SMALL, Theme.TEXT_2), go), BorderLayout.CENTER);
         info.add(note, BorderLayout.SOUTH);
 
         // Latest payment card
@@ -120,7 +122,7 @@ public class DetailsScreen extends JPanel {
             UI.RoundPanel amt = new UI.RoundPanel(new BorderLayout(), 8, Theme.SUBTLE, null);
             amt.setBorder(new EmptyBorder(14, 14, 14, 14));
             amt.add(UI.vstack(6, UI.caps("Amount Paid"),
-                    UI.label("<html><span style='font-size:20pt'><b>" + Theme.peso(p.amount) + "</b></span> <span style='color:#64748B;font-size:9pt'>PHP</span></html>", Theme.BODY, Theme.TEXT)));
+                    UI.label("<html><span style='font-size:20pt'><b>" + Theme.peso(p.amount) + "</b></span> <span style='color:" + Theme.hex(Theme.MUTED) + ";font-size:9pt'>PHP</span></html>", Theme.BODY, Theme.TEXT)));
             JPanel rows = UI.vstack(10, UI.split(UI.muted("Payment Date"), UI.label(Theme.date(p.date), Theme.BODY_B, Theme.TEXT)),
                     UI.split(UI.muted("Subscription"), UI.label(sub.name, Theme.BODY, Theme.TEXT)));
             latest.add(UI.vstack(14, amt, rows), BorderLayout.CENTER);
@@ -218,7 +220,7 @@ public class DetailsScreen extends JPanel {
         }
         if (cs.isEmpty()) ct.setEmpty("No contributions recorded yet.");
         ct.setFooter(Common.footerText(cs.size() + (cs.size() == 1 ? " contribution recorded" : " contributions recorded")),
-                Common.footerTotal("Total Contributions Received:", Theme.peso(total), Theme.PRIMARY));
+                Common.footerTotal("Total Contributions Received:", Theme.peso(total), Theme.ACCENT));
         contrib.add(clipped(ct), BorderLayout.CENTER);
 
         return UI.vstack(16, members, contrib);
@@ -259,7 +261,7 @@ public class DetailsScreen extends JPanel {
         if (us.isEmpty()) t.setEmpty("No usage recorded yet.");
         t.setFooter(Common.footerText(us.size() + (us.size() == 1 ? " usage entry recorded" : " usage entries recorded")), null);
         card.add(t, BorderLayout.CENTER);
-        card.add(UI.note(Icons.Type.INFO, Theme.INFO_BG, Theme.PRIMARY, "About Usage Tracking",
+        card.add(UI.note(Icons.Type.INFO, Theme.INFO_BG, Theme.ACCENT, "About Usage Tracking",
                 "Usage entries are recorded manually. Review your history to help decide whether this subscription is still useful to you.", 640), BorderLayout.SOUTH);
         return card;
     }
@@ -280,7 +282,7 @@ public class DetailsScreen extends JPanel {
         DataTable t = new DataTable(new String[]{"Effective Date", "Previous Price", "New Price", "Notes / Reason"},
                 new float[]{1.6f, 1.5f, 1.5f, 3f}, new int[]{DataTable.L, DataTable.R, DataTable.R, DataTable.L}, true);
         for (PriceChange p : pcs) {
-            JLabel np = UI.label(Theme.peso(p.newPrice), Theme.BODY_B, Theme.PRIMARY);
+            JLabel np = UI.label(Theme.peso(p.newPrice), Theme.BODY_B, Theme.ACCENT);
             np.setHorizontalAlignment(SwingConstants.RIGHT);
             t.addRow(null, UI.label(Theme.date(p.date), Theme.BODY_B, Theme.TEXT), Common.money(p.oldPrice, false), np, blank(p.notes));
         }
@@ -290,7 +292,7 @@ public class DetailsScreen extends JPanel {
                 footer(pcs.size() + (pcs.size() == 1 ? " price change recorded" : " price changes recorded"), null, null, null));
         card.add(center, BorderLayout.CENTER);
 
-        JComponent note = UI.note(Icons.Type.INFO, Theme.INFO_BG, Theme.PRIMARY, "About Price Changes",
+        JComponent note = UI.note(Icons.Type.INFO, Theme.INFO_BG, Theme.ACCENT, "About Price Changes",
                 "Recording a price change updates the subscription\u2019s current price without modifying previously recorded payments.", 640);
         return UI.vstack(14, card, note);
     }

@@ -3,7 +3,6 @@ package beenewed.screens;
 import beenewed.App;
 import beenewed.model.Store;
 import beenewed.ui.*;
-import beenewed.screens.Common;
 import com.beenewed.backend.exception.NotFoundException;
 import com.beenewed.backend.exception.ValidationException;
 
@@ -11,12 +10,12 @@ import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
 
-/** S6 \u2014 Settings & Preferences backed by the local SQLite database. */
+/** S6 \u2014 Settings & Preferences (saved locally with java.util.prefs). */
 public class SettingsScreen extends JPanel {
     private static final String[] WINDOWS = {"3 Days Before", "7 Days Before", "14 Days Before", "30 Days Before"};
     private static final int[] WINDOW_DAYS = {3, 7, 14, 30};
 
-    private final UI.Combo<String> appearance = new UI.Combo<>("Light", "Dark (unavailable)");
+    private final UI.Combo<String> appearance = new UI.Combo<>("Light", "Dark");
     private final UI.Combo<String> remind = new UI.Combo<>(WINDOWS);
     private final UI.Toggle overdue = new UI.Toggle(true);
     private final JLabel toggleLabel = UI.label("Enabled", Theme.BODY_B, Theme.TEXT);
@@ -28,7 +27,12 @@ public class SettingsScreen extends JPanel {
         super(new BorderLayout());
         setBackground(Theme.BG);
 
-        appearance.addActionListener(e -> { if (appearance.getSelectedIndex() == 1) appearance.setSelectedIndex(0); });
+        // Same global setting as the sun/moon switch in the header
+        appearance.setSelectedIndex(Theme.isDark() ? 1 : 0);
+        appearance.addActionListener(e -> {
+            boolean dark = appearance.getSelectedIndex() == 1;
+            if (dark != Theme.isDark()) SwingUtilities.invokeLater(() -> App.get().setDarkMode(dark));
+        });
         overdue.onChange(() -> { toggleLabel.setText(overdue.isOn() ? "Enabled" : "Disabled"); dirty(); });
         remind.addActionListener(e -> dirty());
         viewReminders.addActionListener(e -> App.get().showReminders());
@@ -39,17 +43,17 @@ public class SettingsScreen extends JPanel {
         UI.RoundPanel currency = new UI.RoundPanel(new BorderLayout(8, 0), 8, Theme.SUBTLE, null);
         currency.setBorder(new EmptyBorder(8, 10, 8, 10));
         JLabel php = UI.label("\u20B1 PHP", Theme.TINY.deriveFont(Font.BOLD), Theme.TEXT_2);
-        php.setOpaque(true); php.setBackground(new Color(0xE6EAF1)); php.setBorder(new EmptyBorder(2, 5, 2, 5));
+        php.setOpaque(true); php.setBackground(Theme.TABLE_HEAD); php.setBorder(new EmptyBorder(2, 5, 2, 5));
         currency.add(php, BorderLayout.WEST);
         currency.add(UI.label("Philippine Peso (PHP \u2014 \u20B1)", Theme.SMALL, Theme.TEXT), BorderLayout.CENTER);
         currency.add(new JLabel(Icons.of(Icons.Type.LOCK, 13, Theme.MUTED)), BorderLayout.EAST);
         JLabel fixed = UI.label("Fixed to regional runtime profile", Theme.TINY, Theme.MUTED);
         fixed.setIcon(Icons.of(Icons.Type.INFO, 12, Theme.MUTED));
-        JLabel active = UI.label("Active theme: Light", Theme.TINY, Theme.MUTED);
+        JLabel active = UI.label("Active theme: " + (Theme.isDark() ? "Dark" : "Light"), Theme.TINY, Theme.MUTED);
         active.setIcon(dot(Theme.GREEN));
         general.add(UI.vstack(0,
                 setting("Default Currency", "Currency used to display subscription prices and financial summaries. (Only PHP is currently supported).", UI.vstack(6, currency, fixed), false),
-                setting("Appearance", "Choose the application's display appearance. Dark mode is currently unavailable.", UI.vstack(6, appearance, active), true)
+                setting("Appearance", "Choose the application's display appearance. You can also switch anytime with the sun/moon toggle in the header.", UI.vstack(6, appearance, active), true)
         ), BorderLayout.CENTER);
 
         // Reminders
@@ -114,7 +118,7 @@ public class SettingsScreen extends JPanel {
 
     private JComponent sectionHead(Icons.Type icon, String title, String sub) {
         JLabel t = UI.h2(title);
-        t.setIcon(Icons.of(icon, 16, Theme.PRIMARY));
+        t.setIcon(Icons.of(icon, 16, Theme.ACCENT));
         t.setIconTextGap(8);
         JLabel s = UI.label(sub, Theme.SMALL, Theme.MUTED);
         s.setBorder(new EmptyBorder(0, 24, 0, 0));
@@ -142,11 +146,9 @@ public class SettingsScreen extends JPanel {
         for (int i = 0; i < WINDOW_DAYS.length; i++) if (WINDOW_DAYS[i] == st.remindDays) idx = i;
         remind.setSelectedIndex(idx);
         overdue.setOn(st.showOverdue);
-        var summary = st.dashboardSummary();
-        int upcomingCount = summary.upcomingRenewals().size();
-        int n = upcomingCount + (st.showOverdue ? summary.overdueRenewals().size() : 0);
+        int n = st.upcomingReminders().size() + (st.showOverdue ? st.overdue().size() : 0);
         viewReminders.setText("View Reminders (" + n + ")");
-        reminderHint.setText("<html>Opens reminder dialog: " + upcomingCount + " upcoming renewal" + (upcomingCount == 1 ? "" : "s") + " within " + st.remindDays + " days.</html>");
+        reminderHint.setText("<html>Opens reminder dialog: " + st.upcomingReminders().size() + " upcoming renewal" + (st.upcomingReminders().size() == 1 ? "" : "s") + " within " + st.remindDays + " days.</html>");
         savedMsg.setText("Preferences are saved locally.");
         savedMsg.setForeground(Theme.MUTED);
     }

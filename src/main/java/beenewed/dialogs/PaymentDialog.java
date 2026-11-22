@@ -33,14 +33,14 @@ public class PaymentDialog extends BaseDialog {
                 JLabel l = (JLabel) super.getListCellRendererComponent(list, v, idx, sel, f);
                 l.setBorder(new EmptyBorder(6, 8, 6, 8));
                 if (v instanceof Subscription s) {
-                    l.setText("<html>" + s.name + " &nbsp;<span style='color:#64748B'>(" + s.category + " \u2014 " + Theme.peso(s.price)
+                    l.setText("<html>" + s.name + " &nbsp;<span style='color:" + Theme.hex(Theme.MUTED) + "'>(" + s.category + " \u2014 " + Theme.peso(s.price)
                             + (s.cycle == Cycle.MONTHLY ? "/mo" : "/yr") + ")</span></html>");
                     l.setIcon(Icons.of(s.icon, 15, Theme.TEXT_2));
                     l.setIconTextGap(8);
                 }
                 l.setFont(Theme.BODY);
                 if (idx == -1) l.setOpaque(false);
-                else { l.setBackground(sel ? Theme.PRIMARY_LIGHT : Color.WHITE); l.setForeground(Theme.TEXT); }
+                else { l.setBackground(sel ? Theme.PRIMARY_LIGHT : Theme.ELEVATED); l.setForeground(Theme.TEXT); }
                 return l;
             }
         });
@@ -54,7 +54,7 @@ public class PaymentDialog extends BaseDialog {
         Field fMethod = new Field("Payment Method", false, "(Optional)", method, " ");
         place(pair(fPeriod, fMethod)); gap(10);
         place(new Field("Notes / Reference", false, "(Optional)", notes, null)); gap(12);
-        place(infoNote("<b style='color:#0F172A'>Note:</b> Recording a payment logs an actual financial transaction in Payment History. It does not automatically advance the next renewal date.", false));
+        place(infoNote("<b style='color:" + Theme.hex(Theme.TEXT) + "'>Note:</b> Recording a payment logs an actual financial transaction in Payment History. It does not automatically advance the next renewal date.", false));
 
         // Prefill the amount with the subscription price for new payments
         sub.addActionListener(e -> {

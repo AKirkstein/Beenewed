@@ -14,6 +14,7 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import java.awt.*;
 import java.util.List;
+import java.util.stream.Collectors;
 
 /** S2 \u2014 Subscriptions list with search, category and status filters. */
 public class SubscriptionsScreen extends JPanel {
@@ -75,19 +76,20 @@ public class SubscriptionsScreen extends JPanel {
         l.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 10));
         l.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(Theme.BORDER), new EmptyBorder(2, 5, 2, 5)));
         l.setOpaque(true);
-        l.setBackground(Color.WHITE);
+        l.setBackground(Theme.SURFACE);
         return l;
     }
 
     public void refresh() {
         Store st = Store.get();
-        String q = search.getText().trim();
+        String q = search.getText().trim().toLowerCase();
         String cat = category.selected();
         String stat = status.selected();
-        Status selectedStatus = stat == null || stat.startsWith("All")
-                ? null
-                : Status.valueOf(stat.toUpperCase());
-        List<Subscription> list = st.findSubscriptions(q, cat, selectedStatus);
+        List<Subscription> list = st.subscriptions.stream()
+                .filter(s -> q.isEmpty() || s.name.toLowerCase().contains(q) || s.category.toLowerCase().contains(q))
+                .filter(s -> cat == null || cat.startsWith("All") || s.category.equals(cat))
+                .filter(s -> stat == null || stat.startsWith("All") || s.status.label.equals(stat))
+                .collect(Collectors.toList());
 
         long activeShown = list.stream().filter(s -> s.status == Status.ACTIVE).count();
         showing.setText("Showing " + list.size() + (list.size() == activeShown ? " active" : "") + " subscription" + (list.size() == 1 ? "" : "s"));
@@ -108,16 +110,15 @@ public class SubscriptionsScreen extends JPanel {
                     s.cycle.label, Theme.date(s.nextRenewal), Common.statusBadge(s.status), UI.hrow(6, view, more));
         }
         if (list.isEmpty()) t.setEmpty("No subscriptions match your filters.");
-        var summary = st.dashboardSummary();
-        JLabel totalActive = UI.label("Total active subscriptions: " + summary.activeSubscriptionCount(), Theme.SMALL, Theme.TEXT_2);
+        JLabel totalActive = UI.label("Total active subscriptions: " + st.active().size(), Theme.SMALL, Theme.TEXT_2);
         totalActive.setIcon(Icons.of(Icons.Type.CHECK_CIRCLE, 14, Theme.GREEN));
-        JLabel totals = UI.label("<html>Monthly normalized cost: <b style='color:#1D5BD8'>" + Theme.peso(summary.estimatedMonthlyCost().doubleValue())
-                + "</b> &nbsp;\u2022&nbsp; Annual equivalent: <b style='color:#0F172A'>" + Theme.peso(summary.estimatedAnnualCost().doubleValue()) + "</b></html>", Theme.SMALL, Theme.TEXT_2);
+        JLabel totals = UI.label("<html>Monthly normalized cost: <b style='color:" + Theme.hex(Theme.ACCENT) + "'>" + Theme.peso(st.monthlyTotal())
+                + "</b> &nbsp;\u2022&nbsp; Annual equivalent: <b style='color:" + Theme.hex(Theme.TEXT) + "'>" + Theme.peso(st.annualTotal()) + "</b></html>", Theme.SMALL, Theme.TEXT_2);
         t.setFooter(totalActive, totals);
 
         installKeyboard(t, list);
         tableHolder.removeAll();
-        UI.RoundPanel card = new UI.RoundPanel(new BorderLayout(), 12, Color.WHITE, null);
+        UI.RoundPanel card = new UI.RoundPanel(new BorderLayout(), 12, Theme.SURFACE, null);
         card.add(t);
         tableHolder.add(card, BorderLayout.CENTER);
         tableHolder.revalidate();

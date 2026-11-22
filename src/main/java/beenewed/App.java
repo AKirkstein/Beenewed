@@ -26,18 +26,19 @@ public class App extends JFrame {
 
     public enum Screen { DASHBOARD, SUBSCRIPTIONS, RENEWALS, REPORTS, SETTINGS, DETAILS }
 
-    private final CardLayout cards = new CardLayout();
-    private final JPanel content = new JPanel(cards);
+    private CardLayout cards;
+    private JPanel content;
     private final Map<Screen, JLabel> navItems = new LinkedHashMap<>();
     private Screen current = Screen.DASHBOARD;
-    private final BackendContext backendContext;
 
-    private final DashboardScreen dashboard = new DashboardScreen();
-    private final SubscriptionsScreen subscriptions = new SubscriptionsScreen();
-    private final DetailsScreen details = new DetailsScreen();
-    private final RenewalsScreen renewals = new RenewalsScreen();
-    private final ReportsScreen reports = new ReportsScreen();
-    private final SettingsScreen settings = new SettingsScreen();
+    private DashboardScreen dashboard;
+    private SubscriptionsScreen subscriptions;
+    private DetailsScreen details;
+    private RenewalsScreen renewals;
+    private ReportsScreen reports;
+    private SettingsScreen settings;
+    private JLabel bellBadge;
+    private final BackendContext backendContext;
 
     public App(BackendContext backendContext) {
         super("Beenewed \u2014 Subscription Tracker");
@@ -54,17 +55,41 @@ public class App extends JFrame {
         setMinimumSize(new Dimension(1080, 680));
         setLocationRelativeTo(null);
 
+        // Dim overlay shown behind modal dialogs (reads Theme.OVERLAY when painting, so it follows the theme)
+        JPanel glass = new JPanel() {
+            @Override protected void paintComponent(Graphics g) {
+                g.setColor(Theme.OVERLAY);
+                g.fillRect(0, 0, getWidth(), getHeight());
+            }
+        };
+        glass.setOpaque(false);
+        glass.addMouseListener(new MouseAdapter() {});
+        setGlassPane(glass);
+
+        Store.get().onChange(this::refreshCurrent);
+        buildUI();
+        show(Screen.DASHBOARD);
+    }
+
+    /** Builds (or rebuilds) every component with the current Theme colours. */
+    private void buildUI() {
+        cards = new CardLayout();
+        content = new JPanel(cards);
+        navItems.clear();
+        dashboard = new DashboardScreen();
+        subscriptions = new SubscriptionsScreen();
+        details = new DetailsScreen();
+        renewals = new RenewalsScreen();
+        reports = new ReportsScreen();
+        settings = new SettingsScreen();
+
         JPanel root = new JPanel(new BorderLayout());
         root.setBackground(Theme.BG);
         root.add(buildSidebar(), BorderLayout.WEST);
 
         JPanel main = new JPanel(new BorderLayout());
         main.setBackground(Theme.BG);
-        JPanel header = new JPanel();
-        header.setBackground(Color.WHITE);
-        header.setPreferredSize(new Dimension(10, 56));
-        header.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Theme.BORDER));
-        main.add(header, BorderLayout.NORTH);
+        main.add(buildHeader(), BorderLayout.NORTH);
 
         content.setBackground(Theme.BG);
         content.add(dashboard, Screen.DASHBOARD.name());
@@ -77,36 +102,109 @@ public class App extends JFrame {
         root.add(main, BorderLayout.CENTER);
         setContentPane(root);
 
-        // Dim overlay shown behind modal dialogs
-        JPanel glass = new JPanel() {
-            @Override protected void paintComponent(Graphics g) {
-                g.setColor(Theme.OVERLAY);
-                g.fillRect(0, 0, getWidth(), getHeight());
-            }
-        };
-        glass.setOpaque(false);
-        glass.addMouseListener(new MouseAdapter() {});
-        setGlassPane(glass);
-
         // Keyboard shortcut from the design: Ins = New Subscription
         root.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke(KeyEvent.VK_INSERT, 0), "newSub");
         root.getActionMap().put("newSub", new AbstractAction() {
             public void actionPerformed(ActionEvent e) { addSubscription(); }
         });
+    }
 
-        Store.get().onChange(this::refreshCurrent);
-        show(Screen.DASHBOARD);
+    /** Top header bar: theme switch, notifications bell and profile icon on the right. */
+    private JComponent buildHeader() {
+        JPanel header = new JPanel(new BorderLayout());
+        header.setBackground(Theme.SURFACE);
+        header.setPreferredSize(new Dimension(10, 56));
+        header.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(0, 0, 1, 0, Theme.BORDER), BorderFactory.createEmptyBorder(0, 0, 0, 22)));
+
+        UI.ThemeSwitch themeSwitch = new UI.ThemeSwitch(Theme.isDark(), this::setDarkMode);
+
+        // Bell with a small count badge (renewal reminders)
+        UI.Btn bell = UI.iconButton(Icons.Type.BELL, this::showReminders);
+        bell.setIcon(Icons.of(Icons.Type.BELL, 18, Theme.TEXT_2));
+        bell.setToolTipText("Renewal reminders");
+        bellBadge = new JLabel("", SwingConstants.CENTER) {
+            @Override protected void paintComponent(Graphics g0) {
+                Graphics2D g = (Graphics2D) g0.create(); UI.aa(g);
+                g.setColor(Theme.PRIMARY_HOVER);
+                g.fillOval(0, 0, getWidth(), getHeight());
+                g.dispose();
+                super.paintComponent(g0);
+            }
+        };
+        bellBadge.setFont(Theme.bold(9f));
+        bellBadge.setForeground(Theme.ON_PRIMARY);
+        JLayeredPane bellWrap = new JLayeredPane() {
+            @Override public Dimension getPreferredSize() { return new Dimension(32, 32); }
+            @Override public Dimension getMaximumSize() { return getPreferredSize(); }
+            @Override public void doLayout() { bell.setBounds(1, 2, 28, 28); bellBadge.setBounds(17, 2, 15, 15); }
+        };
+        bellWrap.add(bell, JLayeredPane.DEFAULT_LAYER);
+        bellWrap.add(bellBadge, JLayeredPane.PALETTE_LAYER);
+
+        // Profile icon
+        JComponent profile = new JComponent() {
+            { setPreferredSize(new Dimension(32, 32)); setMaximumSize(getPreferredSize()); setToolTipText("Profile"); }
+            @Override protected void paintComponent(Graphics g0) {
+                Graphics2D g = (Graphics2D) g0.create(); UI.aa(g);
+                g.setColor(Theme.PRIMARY_LIGHT);
+                g.fillOval(0, 0, getWidth() - 1, getHeight() - 1);
+                g.setColor(Theme.BORDER_STRONG);
+                g.drawOval(0, 0, getWidth() - 1, getHeight() - 1);
+                Icons.of(Icons.Type.USER, 18, Theme.ACCENT).paintIcon(this, g, (getWidth() - 18) / 2, (getHeight() - 18) / 2);
+                g.dispose();
+            }
+        };
+
+        JPanel right = UI.hrow(12, themeSwitch, bellWrap, profile);
+        JPanel rw = UI.clear(new GridBagLayout());
+        rw.add(right);
+        header.add(rw, BorderLayout.EAST);
+        updateBell();
+        return header;
+    }
+
+    private void updateBell() {
+        if (bellBadge == null) return;
+        Store st = Store.get();
+        int n = st.upcomingReminders().size() + (st.showOverdue ? st.overdue().size() : 0);
+        bellBadge.setText(n > 9 ? "9+" : String.valueOf(n));
+        bellBadge.setVisible(n > 0);
+    }
+
+    // ---- Light / Dark mode ---------------------------------------------
+    /**
+     * Switches the whole application between Light and Dark mode immediately.
+     * Rebuilds every screen in place with the new colours, keeps you on the same page, and saves the choice.
+     */
+    public void setDarkMode(boolean dark) {
+        if (dark == Theme.isDark()) return;
+        Store.get().saveTheme(dark);
+        Screen keep = current;
+        Subscription detailSub = details.getSubscription();
+        int detailTab = details.getTab();
+        int renewTab = renewals.getTab();
+
+        Theme.apply(dark);
+        installUIColors();
+        buildUI();
+        if (detailSub != null) details.setSubscription(detailSub, detailTab);
+        renewals.selectTab(renewTab);
+        show(keep);
+        SwingUtilities.updateComponentTreeUI(getGlassPane());
+        revalidate();
+        repaint();
     }
 
     private JComponent buildSidebar() {
         JPanel side = new JPanel(new BorderLayout());
-        side.setBackground(Color.WHITE);
+        side.setBackground(Theme.SURFACE);
         side.setPreferredSize(new Dimension(232, 10));
         side.setBorder(BorderFactory.createMatteBorder(0, 0, 0, 1, Theme.BORDER));
 
         // Brand
         UI.RoundPanel logo = new UI.RoundPanel(new GridBagLayout(), 6, Theme.PRIMARY, null);
-        logo.add(new JLabel(Icons.of(Icons.Type.WALLET, 15, Color.WHITE)));
+        logo.add(new JLabel(Icons.of(Icons.Type.WALLET, 15, Theme.ON_PRIMARY)));
         logo.setPreferredSize(new Dimension(24, 24));
         logo.setMaximumSize(new Dimension(24, 24));
         JPanel brand = UI.hrow(10, logo, UI.label("Beenewed", Theme.BODY_B, Theme.TEXT));
@@ -168,9 +266,9 @@ public class App extends JFrame {
         for (Map.Entry<Screen, JLabel> e : navItems.entrySet()) {
             boolean sel = e.getKey() == navScreen(s);
             JLabel l = e.getValue();
-            l.setForeground(sel ? Theme.PRIMARY : Theme.TEXT_2);
+            l.setForeground(sel ? Theme.ACCENT : Theme.TEXT_2);
             l.setFont(sel ? Theme.BODY_B : Theme.BODY);
-            l.setIcon(Icons.of((Icons.Type) l.getClientProperty("icon"), 16, sel ? Theme.PRIMARY : Theme.TEXT_2));
+            l.setIcon(Icons.of((Icons.Type) l.getClientProperty("icon"), 16, sel ? Theme.ACCENT : Theme.TEXT_2));
             l.repaint();
         }
         refreshCurrent();
@@ -179,6 +277,7 @@ public class App extends JFrame {
     private void refreshCurrent() {
         try {
             Store.get().refresh();
+            updateBell();
             switch (current) {
                 case DASHBOARD -> dashboard.refresh();
                 case SUBSCRIPTIONS -> subscriptions.refresh();
@@ -222,11 +321,13 @@ public class App extends JFrame {
         System.setProperty("awt.useSystemAAFontSettings", "on");
         System.setProperty("swing.aatext", "true");
         SwingUtilities.invokeLater(() -> {
-            installLookAndFeel();
             BackendContext backend = null;
             try {
                 backend = new BackendContext();
                 Store.initialize(backend);
+
+                Theme.apply(Store.get().getTheme() == com.beenewed.backend.model.Theme.DARK);
+                installLookAndFeel();
                 new App(backend).setVisible(true);
             } catch (SQLException | IOException error) {
                 if (backend != null) {
@@ -253,16 +354,42 @@ public class App extends JFrame {
         } catch (Exception noFlatLaf) {
             try { UIManager.setLookAndFeel(UIManager.getCrossPlatformLookAndFeelClassName()); } catch (Exception ignored) {}
         }
+        installUIColors();
+    }
+
+    /** Colours for standard Swing pieces (popup menus, tooltips, confirm boxes) so they follow the theme too. */
+    private static void installUIColors() {
         UIManager.put("ToolTip.font", Theme.SMALL);
+        UIManager.put("ToolTip.background", Theme.ELEVATED);
+        UIManager.put("ToolTip.foreground", Theme.TEXT);
+        UIManager.put("ToolTip.border", BorderFactory.createLineBorder(Theme.BORDER_STRONG));
         UIManager.put("PopupMenu.border", BorderFactory.createLineBorder(Theme.BORDER));
+        UIManager.put("PopupMenu.background", Theme.ELEVATED);
         UIManager.put("MenuItem.font", Theme.BODY);
+        UIManager.put("MenuItem.background", Theme.ELEVATED);
+        UIManager.put("MenuItem.foreground", Theme.TEXT);
         UIManager.put("MenuItem.selectionBackground", Theme.PRIMARY_LIGHT);
-        UIManager.put("MenuItem.selectionForeground", Theme.PRIMARY);
+        UIManager.put("MenuItem.selectionForeground", Theme.ACCENT);
+        UIManager.put("Separator.foreground", Theme.BORDER);
+        UIManager.put("Separator.background", Theme.ELEVATED);
         UIManager.put("OptionPane.messageFont", Theme.BODY);
         UIManager.put("OptionPane.buttonFont", Theme.BODY_B);
+        UIManager.put("OptionPane.background", Theme.ELEVATED);
+        UIManager.put("OptionPane.messageForeground", Theme.TEXT);
+        UIManager.put("Panel.background", Theme.ELEVATED);
+        UIManager.put("Label.foreground", Theme.TEXT);
+        UIManager.put("Button.background", Theme.SURFACE);
+        UIManager.put("Button.foreground", Theme.TEXT);
+        UIManager.put("ComboBox.background", Theme.FIELD_BG);
+        UIManager.put("ComboBox.foreground", Theme.TEXT);
         UIManager.put("ComboBox.selectionBackground", Theme.PRIMARY_LIGHT);
-        UIManager.put("ComboBox.selectionForeground", Theme.PRIMARY);
-        UIManager.put("TextField.selectionBackground", new Color(0xC7D8FB));
-        UIManager.put("TextArea.selectionBackground", new Color(0xC7D8FB));
+        UIManager.put("ComboBox.selectionForeground", Theme.ACCENT);
+        UIManager.put("List.background", Theme.ELEVATED);
+        UIManager.put("List.foreground", Theme.TEXT);
+        UIManager.put("TextField.selectionBackground", Theme.SELECTION);
+        UIManager.put("TextField.selectionForeground", Theme.TEXT);
+        UIManager.put("TextArea.selectionBackground", Theme.SELECTION);
+        UIManager.put("TextArea.selectionForeground", Theme.TEXT);
+        UIManager.put("TextPane.selectionBackground", Theme.SELECTION);
     }
 }

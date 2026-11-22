@@ -12,6 +12,7 @@ import javax.swing.event.DocumentListener;
 import java.awt.*;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.stream.Collectors;
 
 /** S4 \u2014 Renewals & Payments: Upcoming Renewals tab and Payment History tab. */
 public class RenewalsScreen extends JPanel {
@@ -44,6 +45,7 @@ public class RenewalsScreen extends JPanel {
     }
 
     public void selectTab(int i) { tabs.select(i, false); }
+    public int getTab() { return tabs.getSelected(); }
 
     private JComponent payTableHolder;
 
@@ -79,25 +81,17 @@ public class RenewalsScreen extends JPanel {
 
         String status = upStatus.selected();
         String due = dueFilter.selected();
-        Status selectedStatus = status == null || status.startsWith("All")
-                ? null
-                : Status.valueOf(status.toUpperCase());
-        LocalDate startDate = null;
-        LocalDate endDate = null;
-        switch (due == null ? "" : due) {
-            case "Next 7 Days" -> {
-                startDate = Store.today();
-                endDate = Store.today().plusDays(7);
-            }
-            case "Next 30 Days" -> {
-                startDate = Store.today();
-                endDate = Store.today().plusDays(30);
-            }
-            case "Overdue" -> endDate = Store.today().minusDays(1);
-            default -> {
-            }
-        }
-        List<Subscription> list = st.byRenewal(st.findRenewals(startDate, endDate, selectedStatus));
+        List<Subscription> list = st.byRenewal(st.subscriptions).stream()
+                .filter(s -> status == null || status.startsWith("All") ? s.status != Status.CANCELLED : s.status.label.equals(status))
+                .filter(s -> {
+                    long d = Store.daysUntil(s.nextRenewal);
+                    return switch (due == null ? "" : due) {
+                        case "Next 7 Days" -> d >= 0 && d <= 7;
+                        case "Next 30 Days" -> d >= 0 && d <= 30;
+                        case "Overdue" -> d < 0;
+                        default -> true;
+                    };
+                }).collect(Collectors.toList());
 
         DataTable t = new DataTable(new String[]{"Subscription", "Billing Cycle", "Next Renewal", "Expected\nAmount", "Due", "Actions"},
                 new float[]{2.4f, 1.2f, 1.5f, 1.3f, 1.4f, 2.6f},
@@ -146,29 +140,17 @@ public class RenewalsScreen extends JPanel {
     private JComponent historyTable() {
         LocalDate today = Store.today();
         String range = payDate.selected(), status = payStatus.selected();
-        Status selectedStatus = status == null || status.startsWith("All")
-                ? null
-                : Status.valueOf(status.toUpperCase());
-        LocalDate startDate = null;
-        LocalDate endDate = null;
-        switch (range == null ? "" : range) {
-            case "This Month" -> {
-                startDate = today.withDayOfMonth(1);
-                endDate = today.withDayOfMonth(today.lengthOfMonth());
-            }
-            case "Last 30 Days" -> {
-                startDate = today.minusDays(30);
-                endDate = today;
-            }
-            case "This Year" -> {
-                startDate = today.withDayOfYear(1);
-                endDate = today.withDayOfYear(today.lengthOfYear());
-            }
-            default -> {
-            }
-        }
-        List<Payment> list = Store.get().findPayments(
-                startDate, endDate, selectedStatus, paySearch.getText().trim());
+        String q = paySearch.getText().trim().toLowerCase();
+        List<Payment> list = Store.get().paymentsNewestFirst().stream()
+                .filter(p -> switch (range == null ? "" : range) {
+                    case "This Month" -> p.date.getYear() == today.getYear() && p.date.getMonth() == today.getMonth();
+                    case "Last 30 Days" -> !p.date.isBefore(today.minusDays(30)) && !p.date.isAfter(today);
+                    case "This Year" -> p.date.getYear() == today.getYear();
+                    default -> true;
+                })
+                .filter(p -> status == null || status.startsWith("All") || p.sub.status.label.equals(status))
+                .filter(p -> q.isEmpty() || p.sub.name.toLowerCase().contains(q))
+                .collect(Collectors.toList());
         DataTable t = new DataTable(new String[]{"Subscription", "Payment Date", "Amount Paid", "Renewal Period", "Payment Method", "Actions"},
                 new float[]{2.4f, 1.7f, 1.4f, 1.4f, 1.7f, 0.8f},
                 new int[]{DataTable.L, DataTable.L, DataTable.R, DataTable.L, DataTable.L, DataTable.R}, true);

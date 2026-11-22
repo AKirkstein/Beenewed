@@ -5,41 +5,82 @@ import java.text.DecimalFormat;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.Locale;
+import java.util.prefs.BackingStoreException;
 
 /** Colours, fonts and formatters shared by the whole app (matches the Figma design). */
 public final class Theme {
     private Theme() {}
 
     // ---- Colours -------------------------------------------------------
-    public static final Color BG            = new Color(0xF5F7FB);
-    public static final Color SURFACE       = Color.WHITE;
-    public static final Color BORDER        = new Color(0xE3E8EF);
-    public static final Color BORDER_STRONG = new Color(0xCBD5E1);
-    public static final Color TABLE_HEAD    = new Color(0xF1F4F9);
-    public static final Color SUBTLE        = new Color(0xF4F6FA);
+    // Not final: Theme.apply(dark) swaps the whole palette, then App rebuilds its UI.
+    public static Color BG, SURFACE, ELEVATED, FIELD_BG, BORDER, BORDER_STRONG, TABLE_HEAD, SUBTLE, ROW_HOVER, FOOTER_BG;
+    public static Color TEXT, TEXT_2, MUTED, PLACEHOLDER;
+    /** PRIMARY = accent fill (buttons, toggles, indicators). ACCENT/LINK = accent used for text & icons (darker in light mode for contrast). */
+    public static Color PRIMARY, PRIMARY_HOVER, ON_PRIMARY, PRIMARY_LIGHT, SOFT_HOVER, ACCENT, LINK, WARM;
+    public static Color GREEN, GREEN_BG, ORANGE, ORANGE_BG, RED, RED_BG, RED_DARK, RED_HOVER, RED_BORDER, AMBER, AMBER_BG;
+    public static Color INFO_BG, INFO_BORDER, AMBER_PANEL, ERR_DIVIDER, OVERLAY, SELECTION, SCROLL_THUMB;
 
-    public static final Color TEXT          = new Color(0x0F172A);
-    public static final Color TEXT_2        = new Color(0x334155);
-    public static final Color MUTED         = new Color(0x64748B);
-    public static final Color PLACEHOLDER   = new Color(0x94A3B8);
+    private static boolean dark;
+    public static boolean isDark() { return dark; }
 
-    public static final Color PRIMARY       = new Color(0x0B4FCF);
-    public static final Color PRIMARY_HOVER = new Color(0x0A43B0);
-    public static final Color PRIMARY_LIGHT = new Color(0xEAF1FE);
-    public static final Color LINK          = new Color(0x1D5BD8);
+    static { apply(false); }
 
-    public static final Color GREEN         = new Color(0x15803D);
-    public static final Color GREEN_BG      = new Color(0xE6F6EC);
-    public static final Color ORANGE        = new Color(0xC2410C);
-    public static final Color ORANGE_BG     = new Color(0xFFF1E2);
-    public static final Color RED           = new Color(0xDC2626);
-    public static final Color RED_BG        = new Color(0xFEF0F0);
-    public static final Color RED_DARK      = new Color(0xB91C1C);
-    public static final Color AMBER         = new Color(0xB45309);
-    public static final Color AMBER_BG      = new Color(0xFFF7E6);
-    public static final Color INFO_BG       = new Color(0xEEF4FF);
+    /** Switches every colour to the light or dark palette. */
+    public static void apply(boolean darkMode) {
+        dark = darkMode;
+        // Shared brand accents
+        PRIMARY       = c(0xF4B315);
+        PRIMARY_HOVER = c(0xE59312);
+        ON_PRIMARY    = c(0x1A141A);
+        WARM          = c(0xD3AF85);
+        if (!darkMode) {
+            BG = c(0xF6F8FC); SURFACE = c(0xFFFFFF); ELEVATED = c(0xFFFFFF); FIELD_BG = c(0xFFFFFF);
+            BORDER = c(0xEAE3DB); BORDER_STRONG = c(0xD9C6AE); TABLE_HEAD = c(0xF8F4EE); SUBTLE = c(0xF6F1EA);
+            ROW_HOVER = c(0xFCF9F4); FOOTER_BG = c(0xFAF7F3);
+            TEXT = c(0x1A141A); TEXT_2 = c(0x423738); MUTED = c(0x6E6062); PLACEHOLDER = c(0x9C8F90);
+            PRIMARY_LIGHT = c(0xFDF2D3); SOFT_HOVER = c(0xFBE6AE); ACCENT = c(0x9A5B00); LINK = c(0x9A5B00);
+            GREEN = c(0x15803D); GREEN_BG = c(0xE6F6EC); ORANGE = c(0xC2410C); ORANGE_BG = c(0xFFF1E2);
+            RED = c(0xDC2626); RED_BG = c(0xFEF0F0); RED_DARK = c(0xB91C1C); RED_HOVER = c(0x991B1B); RED_BORDER = c(0xF8C4C4);
+            AMBER = c(0xB45309); AMBER_BG = c(0xFFF7E6);
+            INFO_BG = c(0xFDF6E7); INFO_BORDER = c(0xF0E0BE); AMBER_PANEL = c(0xFFFAF0); ERR_DIVIDER = c(0xF5B5B5);
+            OVERLAY = new Color(26, 20, 26, 115); SELECTION = c(0xF9DE9A); SCROLL_THUMB = c(0xD9C6AE);
+        } else {
+            BG = c(0x1A141A); SURFACE = c(0x423738); ELEVATED = c(0x514344); FIELD_BG = c(0x362D2F);
+            BORDER = c(0x5B4B4C); BORDER_STRONG = c(0x726061); TABLE_HEAD = c(0x514344); SUBTLE = c(0x4B3F40);
+            ROW_HOVER = c(0x4B3E3F); FOOTER_BG = c(0x483B3C);
+            TEXT = c(0xF6F8FC); TEXT_2 = c(0xD3AF85); MUTED = c(0xB5A193); PLACEHOLDER = c(0x8F7D77);
+            PRIMARY_LIGHT = c(0x5E4B27); SOFT_HOVER = c(0x6E5629); ACCENT = c(0xF4B315); LINK = c(0xF4B315);
+            GREEN = c(0x7EE2A8); GREEN_BG = c(0x23402F); ORANGE = c(0xFDBA74); ORANGE_BG = c(0x4D3322);
+            RED = c(0xF89A9A); RED_BG = c(0x4D2A2B); RED_DARK = c(0xDC2626); RED_HOVER = c(0xB91C1C); RED_BORDER = c(0x7D3B3C);
+            AMBER = c(0xFCD27A); AMBER_BG = c(0x4D3D20);
+            INFO_BG = c(0x4E4233); INFO_BORDER = c(0x6E5B3F); AMBER_PANEL = c(0x4B3D27); ERR_DIVIDER = c(0x7D3B3C);
+            OVERLAY = new Color(0, 0, 0, 150); SELECTION = c(0x7A5E22); SCROLL_THUMB = c(0x726061);
+        }
+    }
 
-    public static final Color OVERLAY       = new Color(15, 23, 42, 115);
+    private static Color c(int rgb) { return new Color(rgb); }
+
+    /** "#RRGGBB" for use inside HTML labels. */
+    public static String hex(Color c) { return String.format("#%02X%02X%02X", c.getRed(), c.getGreen(), c.getBlue()); }
+
+    // ---- One-time migration of the former Java Preferences theme setting ----
+    private static final java.util.prefs.Preferences PREFS = java.util.prefs.Preferences.userRoot().node("beenewed");
+    private static final String LEGACY_DARK_MODE_KEY = "darkMode";
+    private static final String THEME_MIGRATION_KEY = "themeMigratedToSqlite";
+
+    /** Returns the old setting only until it has been imported into the SQLite preferences row. */
+    public static Boolean legacyDarkPreference() {
+        if (PREFS.getBoolean(THEME_MIGRATION_KEY, false)) return null;
+        String value = PREFS.get(LEGACY_DARK_MODE_KEY, null);
+        return value == null ? null : Boolean.valueOf(value);
+    }
+
+    /** Marks the one-time import complete and removes the old theme value. */
+    public static void markThemeMigratedToSqlite() throws BackingStoreException {
+        PREFS.putBoolean(THEME_MIGRATION_KEY, true);
+        PREFS.remove(LEGACY_DARK_MODE_KEY);
+        PREFS.flush();
+    }
 
     // ---- Fonts ---------------------------------------------------------
     private static final String FAMILY = pickFamily();
