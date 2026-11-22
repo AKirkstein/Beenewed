@@ -87,14 +87,48 @@ public class SettingsScreen extends JPanel {
         discard.addActionListener(e -> refresh());
         UI.Btn save = UI.primary("Save Preferences", Icons.Type.SAVE);
         save.addActionListener(e -> {
-            try {
-                Store.get().savePrefs(WINDOW_DAYS[remind.getSelectedIndex()], overdue.isOn());
-                Store.get().changed();
-                savedMsg.setText("Preferences saved.");
-                savedMsg.setForeground(Theme.GREEN);
-            } catch (ValidationException | NotFoundException | Store.BackendAccessException error) {
-                Common.showBackendError(this, error);
-            }
+            int days = WINDOW_DAYS[remind.getSelectedIndex()];
+            boolean showOverdueVal = overdue.isOn();
+            save.setEnabled(false);
+            discard.setEnabled(false);
+            save.setText("Saving...");
+            Window win = SwingUtilities.getWindowAncestor(this);
+            if (win != null) win.setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
+            new SwingWorker<Void, Void>() {
+                @Override
+                protected Void doInBackground() {
+                    Store.get().savePrefs(days, showOverdueVal);
+                    return null;
+                }
+
+                @Override
+                protected void done() {
+                    if (win != null) win.setCursor(Cursor.getDefaultCursor());
+                    save.setEnabled(true);
+                    discard.setEnabled(true);
+                    save.setText("Save Preferences");
+                    try {
+                        get();
+                        Store.get().changed();
+                        savedMsg.setText("Preferences saved.");
+                        savedMsg.setForeground(Theme.GREEN);
+                    } catch (InterruptedException error) {
+                        Thread.currentThread().interrupt();
+                    } catch (java.util.concurrent.ExecutionException error) {
+                        Throwable cause = error.getCause();
+                        if (cause instanceof ValidationException || cause instanceof NotFoundException
+                                || cause instanceof Store.BackendAccessException) {
+                            Common.showBackendError(SettingsScreen.this, (RuntimeException) cause);
+                        } else {
+                            JOptionPane.showMessageDialog(
+                                    SettingsScreen.this,
+                                    cause == null ? "Unable to save preferences." : cause.getMessage(),
+                                    "Save failed",
+                                    JOptionPane.ERROR_MESSAGE);
+                        }
+                    }
+                }
+            }.execute();
         });
         savedMsg.setIcon(Icons.of(Icons.Type.SAVE, 13, Theme.MUTED));
         UI.RoundPanel bar = UI.card(new BorderLayout(), 14);

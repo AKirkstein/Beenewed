@@ -57,7 +57,7 @@ public class ContributionDialog extends BaseDialog {
         }
     }
 
-    @Override protected boolean save() {
+    @Override protected Runnable prepareSave() {
         boolean ok = true;
         boolean hasMember = member.getSelectedItem() instanceof Member;
         fMember.error(hasMember ? null : "Select a member.");
@@ -71,20 +71,15 @@ public class ContributionDialog extends BaseDialog {
         LocalDate d = date.getDate();
         fDate.error(date.isBlank() ? "Date received is required." : d == null ? "Enter a valid date (mm/dd/yyyy)." : null);
         ok &= d != null;
-        if (!ok) return false;
+        if (!ok) return null;
 
         Member m = (Member) member.getSelectedItem();
         Payment p = (Payment) payment.getSelectedItem();
-        Contribution updated = editing == null
-                ? new Contribution(0, sub, m, p, a, d)
-                : editing;
-        updated.member = m;
-        updated.payment = p;
-        updated.amount = a;
-        updated.date = d;
-        Store st = Store.get();
-        if (editing == null) st.recordContribution(updated);
-        else st.updateContribution(updated);
-        return true;
+        Contribution payload = new Contribution(editing == null ? 0 : editing.id, sub, m, p, a, d);
+        return () -> {
+            Store st = Store.get();
+            if (editing == null) st.recordContribution(payload);
+            else st.updateContribution(payload);
+        };
     }
 }

@@ -1,48 +1,104 @@
-# Beenewed — Subscription Tracker (Java Swing + SQLite)
+# Beenewed — Subscription Tracker
 
-A desktop application built with Java 17 Swing, FlatLaf, and SQLite that helps individuals, households, and small offices organize recurring subscriptions. It tracks renewal schedules, payment records, sharing contributions, usage logs, and price changes, and provides reminders and spending summaries to support decisions about keeping, changing, or cancelling services.
+Beenewed is a Java Swing desktop app for tracking recurring subscriptions, renewal dates, payments, shared member contributions, usage logs, and price changes. Each user signs in to their own account backed by **Supabase Auth** and **PostgreSQL**, so subscriptions, payment history, and app preferences stay safely synced across runs.
 
-## Prerequisites
+## Tech Stack
 
-- **Java 17+** (JDK 17 or newer to build; JRE/JDK 17+ to run the standalone JAR)
-- **Maven 3.8+**
+- **Java 17** & **Java Swing** (with FlatLaf styling and Java 17 `HttpClient`)
+- **Apache Maven** (build, tests, and packaging)
+- **Gson** (JSON serialization for Supabase Auth & REST requests)
+- **Supabase Auth** (Email + Password sign-in and Email OTP verification on sign-up)
+- **PostgreSQL** (hosted on Supabase with Row Level Security per user)
 
-## Run Locally (Maven)
+## Prerequisites & Extensions
 
-Run the test suite:
+Make sure you have the following installed before running the project:
+
+- **JDK 17+** — check with `java -version`
+- **Apache Maven (3.8+)** — check with `mvn -version`
+- **VS Code (Optional):** Install the **Extension Pack for Java** (`vscjava.vscode-java-pack`) for Java IntelliSense, Maven integration, and one-click debugging.
+
+## How to Run
+
+### Step 1: Clone the repository
+
+Clone the project and switch to the working branch:
 
 ```sh
-mvn test
+git clone https://github.com/AKirkstein/Beenewed.git
+cd Beenewed
+git checkout feat/supabase-auth
 ```
 
-Launch the desktop application:
+### Step 2: Configure Supabase credentials
+
+Copy `supabase.properties.example` to `supabase.properties` in the project root folder:
+
+```sh
+# Windows (PowerShell)
+Copy-Item supabase.properties.example supabase.properties
+
+# macOS / Linux
+cp supabase.properties.example supabase.properties
+```
+
+Open `supabase.properties` and paste the project's `SUPABASE_URL` and `SUPABASE_ANON_KEY`:
+
+```properties
+SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_ANON_KEY=your-supabase-anon-key
+```
+
+> **Note for groupmates:** Ask a teammate for the shared project's `SUPABASE_URL` and `SUPABASE_ANON_KEY`. **Never commit `supabase.properties` to Git** (it is already listed in `.gitignore`). You can also set `SUPABASE_URL` and `SUPABASE_ANON_KEY` as system environment variables instead of using a file.
+
+### Step 3: Build & Run
+
+Run the test suite to verify everything compiles and passes:
+
+```sh
+mvn clean test
+```
+
+Launch the desktop app:
 
 ```sh
 mvn exec:java "-Dexec.mainClass=beenewed.App"
 ```
 
-## Build & Run Standalone JAR
+On first launch, click **Create Account** in the login window, enter your email and password, type the **Email OTP verification code** sent to your inbox, and then sign in. Use the **Refresh** button on the Dashboard anytime you want to manually re-sync from Supabase.
 
-Package a self-contained executable JAR (including Swing UI classes, backend services, FlatLaf, `sqlite-jdbc` native libraries, and `db/schema.sql`):
+> **Optional standalone JAR:** Run `mvn clean package` and launch with `java -jar target/beenewed-standalone.jar` (make sure `supabase.properties` is in the folder where you run the command, or set the environment variables).
 
-```sh
-mvn clean package
-```
+## What's Included
 
-Run the generated standalone JAR from any directory with Java 17+ installed:
+All UI classes live under `src/main/java/beenewed/`:
 
-```sh
-java -jar target/beenewed-standalone.jar
-```
+| Screen / Dialog | Java class |
+| --- | --- |
+| Sign In, Create Account & Email OTP Verification | `dialogs/LoginDialog` |
+| S1 Dashboard (stats, upcoming renewals, recent payments, Refresh) | `screens/DashboardScreen` |
+| S2 Subscriptions (search, category & status filters) | `screens/SubscriptionsScreen` |
+| S3 Subscription Details (Overview, Payments, Sharing, Usage, Price History tabs) | `screens/DetailsScreen` |
+| S4 Renewals & Payments (Upcoming Renewals, Payment History tabs) | `screens/RenewalsScreen` |
+| S5 Reports (Actual Paid, Current Estimated Recurring Cost) | `screens/ReportsScreen` |
+| S6 Settings & Preferences (theme, reminders, Account & Log Out) | `screens/SettingsScreen` |
+| D1 / D1-B / D1-C Add & Edit Subscription (with validation & icon picker) | `dialogs/SubscriptionDialog` |
+| D2 / D2-B Record & Edit Payment | `dialogs/PaymentDialog` |
+| D3 Add / Edit Shared Member | `dialogs/MemberDialog` |
+| D4 Record / Edit Member Contribution | `dialogs/ContributionDialog` |
+| D5 Record / Edit Usage Entry | `dialogs/UsageDialog` |
+| D6 Record Price Change | `dialogs/PriceChangeDialog` |
+| D7 / D7-B / D7-C Change Status (Pause, Cancel, Reactivate) | `dialogs/StatusDialog` |
+| D8 Renewal Reminders | `dialogs/RemindersDialog` |
 
-> **Data persistence:** On first launch, `beenewed.db` is created automatically in the current working directory (initialized from `src/main/resources/db/schema.sql`) to persist subscriptions, payments, sharing members/contributions, usage logs, price history, reminder settings, and light/dark theme preferences.
+**Keyboard shortcuts:** Press **Ins** anywhere to add a new subscription. On the Subscriptions table, use **↑ / ↓** to select a row and **Enter** to open its details.
 
-## Features & UI
+## Light / Dark Mode
 
-- **Screens:** Dashboard, Subscriptions, Subscription Details (Overview, Payments, Sharing, Usage, Price History), Renewals & Payments, Reports (Actual Paid and Current Estimated Recurring Cost), and Settings & Preferences.
-- **Dialogs:** Add/Edit Subscription, Record/Edit Payment, Add/Edit Member, Record/Edit Contribution, Record/Edit Usage, Record Price Change, Change Status (Pause/Cancel/Reactivate), and Renewal Reminders.
-- **Light / Dark mode:** Toggle instantly from the header switch or **Settings → Appearance**; your choice is persisted in `beenewed.db`.
-- **Keyboard shortcuts:** `Ins` opens the New Subscription dialog; on the Subscriptions table, `↑`/`↓` selects a row and `Enter` opens its details.
+- Click the **sun / moon switch** in the top-right header bar to switch the entire app between Light and Dark mode instantly—sidebar, header, cards, tables, forms, dropdowns, dialogs, and buttons update in place without leaving your current page.
+- **Settings → Appearance** controls the exact same setting and always stays in sync with the header switch.
+- **Your choice is remembered** per user account in Supabase (`app_preferences`). Light mode is the default for new accounts.
+- All colours live in `src/main/java/beenewed/ui/Theme.java` (`Theme.apply(dark)`), using the Beenewed palette: yellow `#F4B315`, orange `#E59312`, warm `#D3AF85`, and `#1A141A` / `#423738` / `#514344` for dark surfaces.
 
 ## Project Layout
 
@@ -50,34 +106,11 @@ java -jar target/beenewed-standalone.jar
 src/
   main/
     java/
-      beenewed/                  Swing UI entry point (App), Store adapter, ui/, screens/, dialogs/
-      com/beenewed/backend/      BackendContext, config/, dao/, model/, services/, exception/
+      beenewed/                  Swing UI: App, Store cache, ui/, screens/, dialogs/
+      com/beenewed/supabase/     SupabaseConfig, SupabaseAuthService, SupabaseRestClient
+      com/beenewed/backend/      Domain models, exceptions, and existing backend services
     resources/
-      db/schema.sql              SQLite schema loaded automatically on startup
+      db/supabase_schema.sql     PostgreSQL schema & Row Level Security policies for Supabase
   test/
-    java/com/beenewed/backend/   JUnit 5 DAO, service, and BackendContext integration tests
+    java/com/beenewed/backend/   JUnit 5 backend tests
 ```
-
-## Architecture (`BackendContext`)
-
-`com.beenewed.backend.BackendContext` is the single entry point wiring `DatabaseConfig`, all 7 SQLite DAOs, and all 9 domain services:
-
-- **Initialization & lifecycle:** `new BackendContext()` initializes `jdbc:sqlite:beenewed.db` in the working directory; `new BackendContext(String jdbcUrl)` supports an in-memory SQLite database for tests. `BackendContext` implements `AutoCloseable` and is closed when the main window exits.
-- **Services exposed:**
-  - `SubscriptionService` — CRUD, filtering, pause/cancel/reactivate, and renewal date calculation (`calculateNextRenewalDate`).
-  - `PaymentService` — record, update, delete, and filter payments.
-  - `MemberService` — manage members assigned to shared subscriptions.
-  - `ContributionService` — record, update, and delete member contributions against payments.
-  - `UsageLogService` — log and manage subscription usage entries.
-  - `PriceHistoryService` — record price changes and view subscription price history.
-  - `AppPreferencesService` — read and update singleton preferences (currency, reminder lead days, overdue visibility, light/dark theme).
-  - `ReportService` — compute `ActualPaidReport` totals and category/subscription breakdowns by month, year, or custom date range.
-  - `DashboardService` — aggregate active counts, recurring estimates, current-month actual paid, recent payments, and renewal reminders.
-- **Error handling:** Service methods throw `ValidationException` for invalid input, `NotFoundException` for missing records, `SQLException` for persistence errors, and `IOException` during schema bootstrap.
-- **Core backend rules:**
-  - Monetary values use `BigDecimal` (never `double` or `float`).
-  - Recording or editing a payment never automatically advances `next_renewal_date`.
-  - Actual Paid sums recorded payment amounts by `payment_date` (excluding upcoming renewals and member contributions); recurring cost estimates include active subscriptions only.
-  - Contributions are capped by their payment amount, are not counted as subscription expenses, and require the member to belong to the payment's subscription.
-  - Paused and cancelled subscriptions retain their renewal date and are excluded from active estimates and reminders; reactivation preserves the stored date unless a replacement date is provided.
-  - Renewal reminders respect the saved lead-day preference, and overdue items appear only when enabled.

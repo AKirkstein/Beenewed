@@ -23,6 +23,7 @@ public final class LoginDialog extends JDialog {
     private enum Mode { SIGN_IN, SIGN_UP, VERIFY_OTP }
 
     private final SupabaseAuthService authService;
+    private final Runnable onAuthenticatedLoad;
 
     private Mode mode = Mode.SIGN_IN;
     private String pendingVerifyEmail;
@@ -60,8 +61,13 @@ public final class LoginDialog extends JDialog {
     private final UI.Btn switchModeLink = UI.link("Don't have an account? Create one");
 
     public LoginDialog(Frame owner, SupabaseAuthService authService) {
+        this(owner, authService, null);
+    }
+
+    public LoginDialog(Frame owner, SupabaseAuthService authService, Runnable onAuthenticatedLoad) {
         super(owner, "Beenewed \u2014 Sign In", true);
         this.authService = authService;
+        this.onAuthenticatedLoad = onAuthenticatedLoad;
 
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setResizable(false);
@@ -346,9 +352,29 @@ public final class LoginDialog extends JDialog {
             @Override
             protected Object doInBackground() throws Exception {
                 if (creating) {
-                    return authService.signUp(email, password);
+                    SupabaseAuthService.SignUpResult signUpResult = authService.signUp(email, password);
+                    if (!signUpResult.confirmationRequired() && onAuthenticatedLoad != null) {
+                        SwingUtilities.invokeLater(() -> submitBtn.setText("Loading data..."));
+                        try {
+                            onAuthenticatedLoad.run();
+                        } catch (RuntimeException loadError) {
+                            authService.signOut();
+                            throw loadError;
+                        }
+                    }
+                    return signUpResult;
                 }
-                return authService.signIn(email, password);
+                Object session = authService.signIn(email, password);
+                if (onAuthenticatedLoad != null) {
+                    SwingUtilities.invokeLater(() -> submitBtn.setText("Loading data..."));
+                    try {
+                        onAuthenticatedLoad.run();
+                    } catch (RuntimeException loadError) {
+                        authService.signOut();
+                        throw loadError;
+                    }
+                }
+                return session;
             }
 
             @Override

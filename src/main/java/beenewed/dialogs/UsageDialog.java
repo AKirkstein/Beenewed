@@ -51,7 +51,7 @@ public class UsageDialog extends BaseDialog {
         }
     }
 
-    @Override protected boolean save() {
+    @Override protected Runnable prepareSave() {
         boolean ok = true;
         LocalDate d = date.getDate();
         fDate.error(date.isBlank() ? "Usage date is required." : d == null ? "Enter a valid date (mm/dd/yyyy)." : null);
@@ -70,18 +70,13 @@ public class UsageDialog extends BaseDialog {
             fNotes.error("Enter a quantity or describe your usage.");
             ok = false;
         } else fNotes.error(null);
-        if (!ok) return false;
+        if (!ok) return null;
 
-        Usage updated = editing == null
-                ? new Usage(0, sub, d, q, q == null ? null : u, n.isEmpty() ? null : n)
-                : editing;
-        updated.date = d;
-        updated.quantity = q;
-        updated.unit = q == null ? null : u;
-        updated.notes = n.isEmpty() ? null : n;
-        Store st = Store.get();
-        if (editing == null) st.addUsage(updated);
-        else st.updateUsage(updated);
-        return true;
+        Usage payload = new Usage(editing == null ? 0 : editing.id, sub, d, q, q == null ? null : u, n.isEmpty() ? null : n);
+        return () -> {
+            Store st = Store.get();
+            if (editing == null) st.addUsage(payload);
+            else st.updateUsage(payload);
+        };
     }
 }

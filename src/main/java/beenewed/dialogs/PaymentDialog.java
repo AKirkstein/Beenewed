@@ -81,10 +81,11 @@ public class PaymentDialog extends BaseDialog {
         }
     }
 
-    @Override protected boolean save() {
+    @Override protected Runnable prepareSave() {
         boolean ok = true;
-        fSub.error(sub.selected() == null ? "Select a subscription." : null);
-        ok &= sub.selected() != null;
+        Subscription selectedSub = sub.selected();
+        fSub.error(selectedSub == null ? "Select a subscription." : null);
+        ok &= selectedSub != null;
         LocalDate d = date.getDate();
         fDate.error(date.isBlank() ? "Payment date is required." : d == null ? "Enter a valid date (mm/dd/yyyy)." : null);
         ok &= d != null;
@@ -94,21 +95,21 @@ public class PaymentDialog extends BaseDialog {
         String per = period.getText().trim();
         fPeriod.error(per.isEmpty() ? "Renewal period is required." : null);
         ok &= !per.isEmpty();
-        if (!ok) return false;
+        if (!ok) return null;
 
         String n = notes.getText().trim();
-        Payment updated = editing == null
-                ? new Payment(0, sub.selected(), d, a, per, method.selected(), n.isEmpty() ? null : n)
-                : editing;
-        updated.sub = sub.selected();
-        updated.date = d;
-        updated.amount = a;
-        updated.period = per;
-        updated.method = method.selected();
-        updated.notes = n.isEmpty() ? null : n;
-        Store st = Store.get();
-        if (editing == null) st.recordPayment(updated);
-        else st.updatePayment(updated);
-        return true;
+        Payment payload = new Payment(
+                editing == null ? 0 : editing.id,
+                selectedSub,
+                d,
+                a,
+                per,
+                method.selected(),
+                n.isEmpty() ? null : n);
+        return () -> {
+            Store st = Store.get();
+            if (editing == null) st.recordPayment(payload);
+            else st.updatePayment(payload);
+        };
     }
 }

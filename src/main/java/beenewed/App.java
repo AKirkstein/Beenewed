@@ -197,16 +197,45 @@ public class App extends JFrame {
     // ---- Light / Dark mode ---------------------------------------------
     /**
      * Switches the whole application between Light and Dark mode immediately.
-     * Rebuilds every screen in place with the new colours, keeps you on the same page, and saves the choice.
+     * Rebuilds every screen in place with the new colours, keeps you on the same page,
+     * and persists the choice to Supabase in the background.
      */
     public void setDarkMode(boolean dark) {
         if (dark == Theme.isDark()) return;
-        try {
-            Store.get().saveTheme(dark);
-        } catch (Store.BackendAccessException error) {
-            Common.showBackendError(this, error);
-            return;
-        }
+        boolean previousDark = Theme.isDark();
+        applyThemeToWindow(dark);
+
+        new SwingWorker<Void, Void>() {
+            @Override
+            protected Void doInBackground() {
+                Store.get().saveTheme(dark);
+                return null;
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    get();
+                } catch (InterruptedException error) {
+                    Thread.currentThread().interrupt();
+                } catch (java.util.concurrent.ExecutionException error) {
+                    Throwable cause = error.getCause();
+                    applyThemeToWindow(previousDark);
+                    if (cause instanceof RuntimeException runtime) {
+                        Common.showBackendError(App.this, runtime);
+                    } else {
+                        JOptionPane.showMessageDialog(
+                                App.this,
+                                cause == null ? "Unable to save theme preference." : cause.getMessage(),
+                                "Unable to save theme",
+                                JOptionPane.ERROR_MESSAGE);
+                    }
+                }
+            }
+        }.execute();
+    }
+
+    private void applyThemeToWindow(boolean dark) {
         Screen keep = current;
         Subscription detailSub = details.getSubscription();
         int detailTab = details.getTab();
@@ -303,7 +332,6 @@ public class App extends JFrame {
 
     private void refreshCurrent() {
         try {
-            Store.get().refresh();
             updateBell();
             switch (current) {
                 case DASHBOARD -> dashboard.refresh();
@@ -364,27 +392,15 @@ public class App extends JFrame {
     }
 
     private static void launchWithLogin(SupabaseAuthService authService, SupabaseRestClient restClient) {
-        LoginDialog loginDialog = new LoginDialog(null, authService);
+        LoginDialog loginDialog = new LoginDialog(null, authService, () -> Store.initialize(restClient));
         if (!loginDialog.showDialog() || !authService.isAuthenticated()) {
             System.exit(0);
             return;
         }
 
-        try {
-            Store.initialize(restClient);
-            Theme.apply(Store.get().getTheme() == com.beenewed.backend.model.Theme.DARK);
-            installUIColors();
-            new App(authService, restClient).setVisible(true);
-        } catch (SupabaseException | Store.BackendAccessException error) {
-            authService.signOut();
-            Store.reset();
-            JOptionPane.showMessageDialog(
-                    null,
-                    error.getMessage(),
-                    "Unable to load account data",
-                    JOptionPane.ERROR_MESSAGE);
-            launchWithLogin(authService, restClient);
-        }
+        Theme.apply(Store.get().getTheme() == com.beenewed.backend.model.Theme.DARK);
+        installUIColors();
+        new App(authService, restClient).setVisible(true);
     }
 
     /** Uses FlatLaf if its jar is on the classpath (the design is a FlatLaf replica); otherwise the cross-platform look. */

@@ -22,6 +22,8 @@ public abstract class BaseDialog extends JDialog {
     protected final JPanel body;
     protected final UI.Btn primaryBtn;
     protected final UI.Btn cancelBtn = UI.secondary("Cancel", null);
+    private UI.Btn deleteBtn;
+    private boolean busy;
     private final JPanel footerLeft = UI.clear(new FlowLayout(FlowLayout.LEFT, 0, 0));
     private Point dragFrom;
 
@@ -86,7 +88,13 @@ public abstract class BaseDialog extends JDialog {
         // Footer
         primaryBtn = UI.primary(primaryText, primaryIcon);
         primaryBtn.addActionListener(e -> {
+            if (busy) return;
             try {
+                Runnable asyncTask = prepareSave();
+                if (asyncTask != null) {
+                    runAsyncAction(true, "Saving...", asyncTask);
+                    return;
+                }
                 if (save()) {
                     Store.get().changed();
                     close();
@@ -125,10 +133,18 @@ public abstract class BaseDialog extends JDialog {
     private int width;
     private void setPreferredWidth(int w) { width = w; }
 
-    /** Validate and persist. Return false to keep the dialog open. */
-    protected abstract boolean save();
+    /**
+     * Validate form fields on the EDT and return a background task to persist changes,
+     * or {@code null} to keep the dialog open when validation fails.
+     */
+    protected Runnable prepareSave() { return null; }
 
-    protected void cancel() { close(); }
+    /** Legacy synchronous save hook. Prefer {@link #prepareSave()} for background Supabase calls. */
+    protected boolean save() { return false; }
+
+    protected void cancel() {
+        if (!busy) close();
+    }
 
     protected void close() {
         owner.getGlassPane().setVisible(false);
@@ -141,19 +157,70 @@ public abstract class BaseDialog extends JDialog {
         del.setForeground(Theme.RED);
         del.setIcon(Icons.of(Icons.Type.TRASH, 15, Theme.RED));
         del.addActionListener(e -> {
+            if (busy) return;
             int ok = JOptionPane.showConfirmDialog(this, "Delete this " + what + "? This cannot be undone.", "Delete " + what,
                     JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
             if (ok == JOptionPane.OK_OPTION) {
-                try {
-                    action.run();
-                    Store.get().changed();
-                    close();
-                } catch (ValidationException | NotFoundException | Store.BackendAccessException error) {
-                    Common.showBackendError(this, error);
-                }
+                runAsyncAction(false, "Deleting...", action);
             }
         });
+        deleteBtn = del;
         footerLeft.add(del);
+    }
+
+    private void runAsyncAction(boolean isPrimary, String busyLabel, Runnable action) {
+        busy = true;
+        String origPrimary = primaryBtn.getText();
+        String origDelete = deleteBtn == null ? null : deleteBtn.getText();
+        primaryBtn.setEnabled(false);
+        cancelBtn.setEnabled(false);
+        if (deleteBtn != null) deleteBtn.setEnabled(false);
+        if (isPrimary) primaryBtn.setText(busyLabel);
+        else if (deleteBtn != null) deleteBtn.setText(busyLabel);
+        setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
+        owner.setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
+
+        new SwingWorker<Void, Void>() {
+            @Override
+            protected Void doInBackground() {
+                action.run();
+                return null;
+            }
+
+            @Override
+            protected void done() {
+                busy = false;
+                setCursor(Cursor.getDefaultCursor());
+                owner.setCursor(Cursor.getDefaultCursor());
+                primaryBtn.setText(origPrimary);
+                primaryBtn.setEnabled(true);
+                cancelBtn.setEnabled(true);
+                if (deleteBtn != null) {
+                    deleteBtn.setText(origDelete);
+                    deleteBtn.setEnabled(true);
+                }
+                try {
+                    get();
+                    Store.get().changed();
+                    close();
+                } catch (InterruptedException error) {
+                    Thread.currentThread().interrupt();
+                } catch (java.util.concurrent.ExecutionException error) {
+                    Throwable cause = error.getCause();
+                    if (cause instanceof ValidationException || cause instanceof NotFoundException
+                            || cause instanceof Store.BackendAccessException) {
+                        Common.showBackendError(BaseDialog.this, (RuntimeException) cause);
+                    } else {
+                        JOptionPane.showMessageDialog(
+                                BaseDialog.this,
+                                cause == null ? "The operation could not be completed." : cause.getMessage(),
+                                "Unable to complete operation",
+                                JOptionPane.ERROR_MESSAGE);
+                    }
+                    refit();
+                }
+            }
+        }.execute();
     }
 
     /** Re-fits the dialog height to its content (e.g. after error messages appear). */

@@ -191,8 +191,8 @@ public class StatusDialog extends BaseDialog {
         return t;
     }
 
-    @Override protected boolean save() {
-        Store.get().changeStatus(sub, status.selected());
-        return true;
+    @Override protected Runnable prepareSave() {
+        Status target = status.selected();
+        return () -> Store.get().changeStatus(sub, target);
     }
 }

@@ -170,20 +170,14 @@ public final class SupabaseAuthService {
         if (session == null || session.accessToken() == null || session.accessToken().isBlank()) {
             return;
         }
-        try {
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(config.url() + "/auth/v1/logout"))
-                    .timeout(Duration.ofSeconds(10))
-                    .header("apikey", config.anonKey())
-                    .header("Authorization", "Bearer " + session.accessToken())
-                    .POST(HttpRequest.BodyPublishers.noBody())
-                    .build();
-            http.send(request, HttpResponse.BodyHandlers.discarding());
-        } catch (IOException | InterruptedException ignored) {
-            if (ignored instanceof InterruptedException) {
-                Thread.currentThread().interrupt();
-            }
-        }
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(config.url() + "/auth/v1/logout"))
+                .timeout(Duration.ofSeconds(10))
+                .header("apikey", config.anonKey())
+                .header("Authorization", "Bearer " + session.accessToken())
+                .POST(HttpRequest.BodyPublishers.noBody())
+                .build();
+        http.sendAsync(request, HttpResponse.BodyHandlers.discarding());
     }
 
     public SupabaseSession getCurrentSession() {

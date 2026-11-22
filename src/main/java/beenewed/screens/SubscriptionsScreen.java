@@ -135,12 +135,38 @@ public class SubscriptionsScreen extends JPanel {
             int ok = JOptionPane.showConfirmDialog(App.get(), "Delete " + s.name + " and all of its records?", "Delete Subscription",
                     JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
             if (ok == JOptionPane.OK_OPTION) {
-                try {
-                    Store.get().deleteSubscription(s);
-                    Store.get().changed();
-                } catch (ValidationException | NotFoundException | Store.BackendAccessException error) {
-                    Common.showBackendError(this, error);
-                }
+                Window win = SwingUtilities.getWindowAncestor(this);
+                if (win != null) win.setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
+                new SwingWorker<Void, Void>() {
+                    @Override
+                    protected Void doInBackground() {
+                        Store.get().deleteSubscription(s);
+                        return null;
+                    }
+
+                    @Override
+                    protected void done() {
+                        if (win != null) win.setCursor(Cursor.getDefaultCursor());
+                        try {
+                            get();
+                            Store.get().changed();
+                        } catch (InterruptedException error) {
+                            Thread.currentThread().interrupt();
+                        } catch (java.util.concurrent.ExecutionException error) {
+                            Throwable cause = error.getCause();
+                            if (cause instanceof ValidationException || cause instanceof NotFoundException
+                                    || cause instanceof Store.BackendAccessException) {
+                                Common.showBackendError(SubscriptionsScreen.this, (RuntimeException) cause);
+                            } else {
+                                JOptionPane.showMessageDialog(
+                                        SubscriptionsScreen.this,
+                                        cause == null ? "Unable to delete subscription." : cause.getMessage(),
+                                        "Delete failed",
+                                        JOptionPane.ERROR_MESSAGE);
+                            }
+                        }
+                    }
+                }.execute();
             }
         }));
         return m;

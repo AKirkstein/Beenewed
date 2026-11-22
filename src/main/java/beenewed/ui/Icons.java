@@ -14,7 +14,7 @@ public final class Icons {
         // navigation / UI
         DASHBOARD, CARD, CALENDAR, CHART, GEAR, PLUS, SEARCH, BELL, HISTORY, INFO, PENCIL, SWAP,
         CLOSE, CHECK, CHEVRON_DOWN, CHEVRON_UP, CHEVRON_LEFT, CHEVRON_RIGHT, ARROW_RIGHT, RECEIPT, USERS, USER_PLUS, CASH, LOCK,
-        FILTER, CLOCK, DOTS, X_CIRCLE, SUN, MOON, USER, SAVE, EXTERNAL, ALERT, CHECK_CIRCLE, SLIDERS, WALLET, TRASH, LIST,
+        FILTER, CLOCK, DOTS, X_CIRCLE, SUN, MOON, USER, SAVE, EXTERNAL, ALERT, CHECK_CIRCLE, SLIDERS, WALLET, TRASH, LIST, REFRESH,
         // subscription icons (16 generic icons from the icon selector)
         TELEVISION, COMPUTER, AUDIO, MUSIC, GAMING, CLOUD, EDUCATION, WORK, MOVIES, MOBILE, INTERNET,
         UTILITIES, DESIGN, SECURITY, SHOPPING, OTHER
@@ -142,6 +142,10 @@ public final class Icons {
             case SAVE -> { poly(g, 4, 4, 16.5, 4, 20, 7.5, 20, 20, 4, 20, 4, 4); rr(g, 8, 4, 7, 5, 1); rr(g, 7.5, 13, 9, 7, 1); }
             case EXTERNAL -> { poly(g, 13, 4, 20, 4, 20, 11); ln(g, 20, 4, 11, 13); poly(g, 17, 14, 17, 20, 4, 20, 4, 7, 10, 7); }
             case TRASH -> { ln(g, 4, 6.5, 20, 6.5); poly(g, 9, 6.5, 9, 4, 15, 4, 15, 6.5); poly(g, 6, 6.5, 7, 20, 17, 20, 18, 6.5); }
+            case REFRESH -> {
+                g.draw(new Arc2D.Double(4, 4, 16, 16, 35, 290, Arc2D.OPEN));
+                poly(g, 19.5, 4.5, 19.5, 9.5, 14.5, 9.5);
+            }
 
             case TELEVISION -> { rr(g, 2.5, 4.5, 19, 13, 2.5); ln(g, 8, 20.5, 16, 20.5); ln(g, 12, 17.5, 12, 20.5); }
             case COMPUTER -> { rr(g, 4, 5, 16, 11, 2); ln(g, 2, 19, 22, 19); }
