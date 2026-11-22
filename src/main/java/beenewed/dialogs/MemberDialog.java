@@ -33,19 +33,16 @@ public class MemberDialog extends BaseDialog {
         }
     }
 
-    @Override protected boolean save() {
+    @Override protected Runnable prepareSave() {
         String n = name.getText().trim();
         fName.error(n.isEmpty() ? "Member name is required." : null);
-        if (n.isEmpty()) return false;
+        if (n.isEmpty()) return null;
         String nt = notes.getText().trim();
-        Member updated = editing == null
-                ? new Member(0, sub, n, nt.isEmpty() ? null : nt)
-                : editing;
-        updated.name = n;
-        updated.notes = nt.isEmpty() ? null : nt;
-        Store st = Store.get();
-        if (editing == null) st.addMember(updated);
-        else st.updateMember(updated);
-        return true;
+        Member payload = new Member(editing == null ? 0 : editing.id, sub, n, nt.isEmpty() ? null : nt);
+        return () -> {
+            Store st = Store.get();
+            if (editing == null) st.addMember(payload);
+            else st.updateMember(payload);
+        };
     }
 }

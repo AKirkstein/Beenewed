@@ -22,6 +22,7 @@ replay_pid*
 # Secrets, logs, and temporary files
 .env
 .env.*
+supabase.properties
 *.log
 *.tmp
 *.bak

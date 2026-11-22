@@ -22,9 +22,48 @@ public class DashboardScreen extends JPanel {
         Store st = Store.get();
         LocalDate today = Store.today();
 
+        UI.Btn refreshBtn = UI.secondary("Refresh", Icons.Type.REFRESH);
+        refreshBtn.setToolTipText("Re-sync data from Supabase");
+        refreshBtn.addActionListener(e -> {
+            refreshBtn.setEnabled(false);
+            refreshBtn.setText("Refreshing...");
+            Window win = SwingUtilities.getWindowAncestor(this);
+            if (win != null) win.setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
+            new SwingWorker<Void, Void>() {
+                @Override
+                protected Void doInBackground() {
+                    Store.get().refresh();
+                    return null;
+                }
+
+                @Override
+                protected void done() {
+                    if (win != null) win.setCursor(Cursor.getDefaultCursor());
+                    refreshBtn.setEnabled(true);
+                    refreshBtn.setText("Refresh");
+                    try {
+                        get();
+                        Store.get().changed();
+                    } catch (InterruptedException error) {
+                        Thread.currentThread().interrupt();
+                    } catch (java.util.concurrent.ExecutionException error) {
+                        Throwable cause = error.getCause();
+                        if (cause instanceof RuntimeException runtime) {
+                            Common.showBackendError(DashboardScreen.this, runtime);
+                        } else {
+                            JOptionPane.showMessageDialog(
+                                    DashboardScreen.this,
+                                    cause == null ? "Unable to refresh data." : cause.getMessage(),
+                                    "Refresh failed",
+                                    JOptionPane.ERROR_MESSAGE);
+                        }
+                    }
+                }
+            }.execute();
+        });
         UI.Btn add = UI.primary("Add Subscription", Icons.Type.PLUS);
         add.addActionListener(e -> App.get().addSubscription());
-        JComponent header = Common.pageHeader("Dashboard", "A quick overview of your subscriptions, payments, and renewals.", add);
+        JComponent header = Common.pageHeader("Dashboard", "A quick overview of your subscriptions, payments, and renewals.", UI.hrow(8, refreshBtn, add));
 
         // ---- Stat cards
         double paidThisMonth = st.payments.stream()

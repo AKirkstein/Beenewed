@@ -347,6 +347,38 @@ public final class UI {
         }
     }
 
+    public static class PasswordField extends JPasswordField {
+        private String placeholder;
+        public PasswordField(String placeholder) {
+            this.placeholder = placeholder;
+            setFont(Theme.BODY);
+            setForeground(Theme.TEXT);
+            setCaretColor(Theme.TEXT);
+            setOpaque(false);
+            setBorder(new FieldBorder(9, 12));
+            addFocusListener(new FocusAdapter() {
+                public void focusGained(FocusEvent e) { repaint(); }
+                public void focusLost(FocusEvent e) { repaint(); }
+            });
+        }
+        public void setPlaceholder(String p) { placeholder = p; repaint(); }
+        @Override public Dimension getMaximumSize() { return new Dimension(Integer.MAX_VALUE, getPreferredSize().height); }
+        @Override protected void paintComponent(Graphics g) {
+            if (getBorder() instanceof FieldBorder) paintFieldBg(this, g);
+            super.paintComponent(g);
+            if (getPassword().length == 0 && placeholder != null) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                aa(g2);
+                g2.setColor(Theme.PLACEHOLDER);
+                g2.setFont(getFont());
+                Insets in = getInsets();
+                FontMetrics fm = g2.getFontMetrics();
+                g2.drawString(placeholder, in.left, (getHeight() - fm.getHeight()) / 2 + fm.getAscent());
+                g2.dispose();
+            }
+        }
+    }
+
     public static class TextArea extends JTextArea {
         private final String placeholder;
         public TextArea(String placeholder, int rows) {

@@ -5,14 +5,15 @@ import beenewed.model.Models.*;
 import beenewed.model.Store;
 import beenewed.screens.*;
 import beenewed.ui.*;
-import com.beenewed.backend.BackendContext;
+import com.beenewed.supabase.SupabaseAuthService;
+import com.beenewed.supabase.SupabaseConfig;
+import com.beenewed.supabase.SupabaseException;
+import com.beenewed.supabase.SupabaseRestClient;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
 import java.awt.event.*;
-import java.io.IOException;
-import java.sql.SQLException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -38,17 +39,19 @@ public class App extends JFrame {
     private ReportsScreen reports;
     private SettingsScreen settings;
     private JLabel bellBadge;
-    private final BackendContext backendContext;
+    private final SupabaseAuthService authService;
+    private final SupabaseRestClient restClient;
 
-    public App(BackendContext backendContext) {
+    public App(SupabaseAuthService authService, SupabaseRestClient restClient) {
         super("Beenewed \u2014 Subscription Tracker");
-        this.backendContext = backendContext;
+        this.authService = authService;
+        this.restClient = restClient;
         instance = this;
         setDefaultCloseOperation(DO_NOTHING_ON_CLOSE);
         addWindowListener(new WindowAdapter() {
             @Override
             public void windowClosing(WindowEvent event) {
-                closeBackend();
+                shutdown();
             }
         });
         setSize(1280, 860);
@@ -69,6 +72,24 @@ public class App extends JFrame {
         Store.get().onChange(this::refreshCurrent);
         buildUI();
         show(Screen.DASHBOARD);
+    }
+
+    public String getCurrentUserEmail() {
+        String email = authService.getEmail();
+        return email == null || email.isBlank() ? "Signed-in account" : email;
+    }
+
+    /** Clears the active Supabase session, hides the main window, and reopens the login dialog. */
+    public void logout() {
+        authService.signOut();
+        Store.reset();
+        setVisible(false);
+        dispose();
+        instance = null;
+
+        Theme.apply(false);
+        installUIColors();
+        SwingUtilities.invokeLater(() -> launchWithLogin(authService, restClient));
     }
 
     /** Builds (or rebuilds) every component with the current Theme colours. */
@@ -143,8 +164,9 @@ public class App extends JFrame {
         bellWrap.add(bellBadge, JLayeredPane.PALETTE_LAYER);
 
         // Profile icon
+        String profileTip = "Signed in as " + getCurrentUserEmail();
         JComponent profile = new JComponent() {
-            { setPreferredSize(new Dimension(32, 32)); setMaximumSize(getPreferredSize()); setToolTipText("Profile"); }
+            { setPreferredSize(new Dimension(32, 32)); setMaximumSize(getPreferredSize()); setToolTipText(profileTip); }
             @Override protected void paintComponent(Graphics g0) {
                 Graphics2D g = (Graphics2D) g0.create(); UI.aa(g);
                 g.setColor(Theme.PRIMARY_LIGHT);
@@ -175,11 +197,45 @@ public class App extends JFrame {
     // ---- Light / Dark mode ---------------------------------------------
     /**
      * Switches the whole application between Light and Dark mode immediately.
-     * Rebuilds every screen in place with the new colours, keeps you on the same page, and saves the choice.
+     * Rebuilds every screen in place with the new colours, keeps you on the same page,
+     * and persists the choice to Supabase in the background.
      */
     public void setDarkMode(boolean dark) {
         if (dark == Theme.isDark()) return;
-        Store.get().saveTheme(dark);
+        boolean previousDark = Theme.isDark();
+        applyThemeToWindow(dark);
+
+        new SwingWorker<Void, Void>() {
+            @Override
+            protected Void doInBackground() {
+                Store.get().saveTheme(dark);
+                return null;
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    get();
+                } catch (InterruptedException error) {
+                    Thread.currentThread().interrupt();
+                } catch (java.util.concurrent.ExecutionException error) {
+                    Throwable cause = error.getCause();
+                    applyThemeToWindow(previousDark);
+                    if (cause instanceof RuntimeException runtime) {
+                        Common.showBackendError(App.this, runtime);
+                    } else {
+                        JOptionPane.showMessageDialog(
+                                App.this,
+                                cause == null ? "Unable to save theme preference." : cause.getMessage(),
+                                "Unable to save theme",
+                                JOptionPane.ERROR_MESSAGE);
+                    }
+                }
+            }
+        }.execute();
+    }
+
+    private void applyThemeToWindow(boolean dark) {
         Screen keep = current;
         Subscription detailSub = details.getSubscription();
         int detailTab = details.getTab();
@@ -276,7 +332,6 @@ public class App extends JFrame {
 
     private void refreshCurrent() {
         try {
-            Store.get().refresh();
             updateBell();
             switch (current) {
                 case DASHBOARD -> dashboard.refresh();
@@ -291,18 +346,11 @@ public class App extends JFrame {
         }
     }
 
-    private void closeBackend() {
-        try {
-            backendContext.close();
-            dispose();
-            System.exit(0);
-        } catch (SQLException error) {
-            JOptionPane.showMessageDialog(
-                    this,
-                    error.getMessage(),
-                    "Unable to close database",
-                    JOptionPane.ERROR_MESSAGE);
-        }
+    private void shutdown() {
+        authService.signOut();
+        Store.reset();
+        dispose();
+        System.exit(0);
     }
 
     public void openDetails(Subscription s, int tab) { details.setSubscription(s, tab); show(Screen.DETAILS); }
@@ -321,29 +369,38 @@ public class App extends JFrame {
         System.setProperty("awt.useSystemAAFontSettings", "on");
         System.setProperty("swing.aatext", "true");
         SwingUtilities.invokeLater(() -> {
-            BackendContext backend = null;
-            try {
-                backend = new BackendContext();
-                Store.initialize(backend);
+            Theme.apply(false);
+            installLookAndFeel();
 
-                Theme.apply(Store.get().getTheme() == com.beenewed.backend.model.Theme.DARK);
-                installLookAndFeel();
-                new App(backend).setVisible(true);
-            } catch (SQLException | IOException error) {
-                if (backend != null) {
-                    try {
-                        backend.close();
-                    } catch (SQLException closeError) {
-                        error.addSuppressed(closeError);
-                    }
-                }
+            SupabaseConfig config;
+            try {
+                config = SupabaseConfig.load();
+            } catch (SupabaseException error) {
                 JOptionPane.showMessageDialog(
                         null,
                         error.getMessage(),
-                        "Unable to initialize database",
+                        "Supabase Configuration Required",
                         JOptionPane.ERROR_MESSAGE);
+                System.exit(1);
+                return;
             }
+
+            SupabaseAuthService authService = new SupabaseAuthService(config);
+            SupabaseRestClient restClient = new SupabaseRestClient(config, authService);
+            launchWithLogin(authService, restClient);
         });
+    }
+
+    private static void launchWithLogin(SupabaseAuthService authService, SupabaseRestClient restClient) {
+        LoginDialog loginDialog = new LoginDialog(null, authService, () -> Store.initialize(restClient));
+        if (!loginDialog.showDialog() || !authService.isAuthenticated()) {
+            System.exit(0);
+            return;
+        }
+
+        Theme.apply(Store.get().getTheme() == com.beenewed.backend.model.Theme.DARK);
+        installUIColors();
+        new App(authService, restClient).setVisible(true);
     }
 
     /** Uses FlatLaf if its jar is on the classpath (the design is a FlatLaf replica); otherwise the cross-platform look. */

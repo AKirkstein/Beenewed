@@ -144,33 +144,40 @@ public class SubscriptionDialog extends BaseDialog {
         iconGrid.revalidate(); iconGrid.repaint();
     }
 
-    @Override protected boolean save() {
+    @Override protected Runnable prepareSave() {
         boolean ok = true;
         String n = name.getText().trim();
         fName.error(n.isEmpty() ? "Subscription name is required." : null);
         ok &= !n.isEmpty();
-        fCategory.error(categoryValue() == null ? "Please select a category." : null);
-        ok &= categoryValue() != null;
+        String cat = categoryValue();
+        fCategory.error(cat == null ? "Please select a category." : null);
+        ok &= cat != null;
         Double p = parseAmount(price.getText());
         fPrice.error(p == null ? "Enter an amount greater than zero." : null);
         ok &= p != null;
         LocalDate d = renewal.getDate();
         fDate.error(renewal.isBlank() ? "Next renewal date is required." : d == null ? "Enter a valid date (mm/dd/yyyy)." : null);
         ok &= d != null;
-        if (!ok) { body.revalidate(); body.repaint(); return false; }
+        if (!ok) { body.revalidate(); body.repaint(); return null; }
 
-        Store st = Store.get();
-        Subscription updated = editing == null
-                ? new Subscription(0, n, categoryValue(), icon, p, cycle.selected(), d)
-                : editing;
-        updated.name = n;
-        updated.category = categoryValue();
-        updated.icon = icon;
-        updated.price = editing == null ? p : editing.price;
-        updated.cycle = cycle.selected();
-        updated.nextRenewal = d;
-        if (editing == null) st.addSubscription(updated);
-        else st.updateSubscription(updated);
-        return true;
+        Cycle selectedCycle = cycle.selected();
+        Icons.Type selectedIcon = icon;
+        double effectivePrice = editing == null ? p : editing.price;
+        Subscription payload = new Subscription(
+                editing == null ? 0 : editing.id,
+                n,
+                cat,
+                selectedIcon,
+                effectivePrice,
+                selectedCycle,
+                d);
+        if (editing != null) {
+            payload.status = editing.status;
+        }
+        return () -> {
+            Store st = Store.get();
+            if (editing == null) st.addSubscription(payload);
+            else st.updateSubscription(payload);
+        };
     }
 }

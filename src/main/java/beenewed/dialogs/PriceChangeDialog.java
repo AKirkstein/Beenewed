@@ -35,7 +35,7 @@ public class PriceChangeDialog extends BaseDialog {
         date.setDate(Store.today());
     }
 
-    @Override protected boolean save() {
+    @Override protected Runnable prepareSave() {
         boolean ok = true;
         Double p = parseAmount(newPrice.getText());
         String err = p == null ? "Enter an amount greater than zero." : Math.abs(p - sub.price) < 0.001 ? "The new price is the same as the current price." : null;
@@ -44,9 +44,9 @@ public class PriceChangeDialog extends BaseDialog {
         LocalDate d = date.getDate();
         fDate.error(date.isBlank() ? "Effective date is required." : d == null ? "Enter a valid date (mm/dd/yyyy)." : null);
         ok &= d != null;
-        if (!ok) return false;
+        if (!ok) return null;
         String n = notes.getText().trim();
-        Store.get().recordPriceChange(sub, d, p, n.isEmpty() ? null : n);
-        return true;
+        String reason = n.isEmpty() ? null : n;
+        return () -> Store.get().recordPriceChange(sub, d, p, reason);
     }
 }
