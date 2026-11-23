@@ -49,6 +49,17 @@ class AppHeaderAndProfileTest {
             AccessibleContext headerCtx = menu.getComponent(0).getAccessibleContext();
             assertNotNull(headerCtx);
             assertEquals("Signed in as kirk@example.com", headerCtx.getAccessibleName());
+
+            Component headerComp = menu.getComponent(0);
+            SwingUtilities.invokeAndWait(() -> {
+                Dimension pref = headerComp.getPreferredSize();
+                headerComp.setBounds(0, 0, pref.width, pref.height);
+                layoutTree(headerComp);
+            });
+            Component avatar = findByName(headerComp, "profileMenuAvatar");
+            assertNotNull(avatar, "ProfileMenu header should contain a circular avatar component");
+            assertEquals(36, avatar.getWidth(), "ProfileMenu avatar width must remain 36px");
+            assertEquals(36, avatar.getHeight(), "ProfileMenu avatar height must remain 36px (true circle, not stretched oval)");
         }
     }
 
@@ -84,6 +95,9 @@ class AppHeaderAndProfileTest {
 
             Component profileComp = findByAccessibleName(app.getContentPane(), "Account menu");
             assertNotNull(profileComp, "Header should contain the accessible Account menu profile button");
+            assertEquals(new Dimension(32, 32), profileComp.getPreferredSize());
+            assertEquals(new Dimension(32, 32), profileComp.getMinimumSize());
+            assertEquals(new Dimension(32, 32), profileComp.getMaximumSize());
             AccessibleContext ctx = profileComp.getAccessibleContext();
             assertNotNull(ctx);
             assertEquals(AccessibleRole.PUSH_BUTTON, ctx.getAccessibleRole());
@@ -128,6 +142,30 @@ class AppHeaderAndProfileTest {
             }
         }
         ex.close();
+    }
+
+    private static Component findByName(Component root, String name) {
+        if (name.equals(root.getName())) {
+            return root;
+        }
+        if (root instanceof Container container) {
+            for (Component child : container.getComponents()) {
+                Component found = findByName(child, name);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static void layoutTree(Component root) {
+        if (root instanceof Container container) {
+            container.doLayout();
+            for (Component child : container.getComponents()) {
+                layoutTree(child);
+            }
+        }
     }
 
     private static Component findByAccessibleName(Component root, String name) {

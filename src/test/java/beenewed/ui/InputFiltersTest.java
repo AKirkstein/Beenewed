@@ -123,4 +123,59 @@ class InputFiltersTest {
         assertNull(InputFilters.parseStrictDate("abc"));
         assertNull(InputFilters.parseStrictDate(""));
     }
+
+    @Test
+    void digitsDocumentFilterEnforcesNumericOnlyAndMaxEightDigits() throws BadLocationException {
+        Theme.apply(false);
+        UI.TextField otp = new UI.TextField("Enter 8-digit verification code");
+        InputFilters.installDigitsFilter(otp, InputFilters.OTP_CODE_LENGTH);
+        Document doc = otp.getDocument();
+
+        // Pure non-digits are rejected
+        doc.insertString(0, "dfddfsfdsfsfsf", null);
+        assertEquals("", otp.getText());
+        otp.replaceSelection("abc!@# ");
+        assertEquals("", otp.getText());
+
+        // Mixed paste extracts only digits and caps at 8 characters
+        otp.replaceSelection("12-ab 34cd567899");
+        assertEquals("12345678", otp.getText());
+
+        // Further insertions beyond 8 digits are ignored
+        doc.insertString(doc.getLength(), "9", null);
+        assertEquals("12345678", otp.getText());
+
+        // Typing/pasting pure non-digits over a selection does not wipe existing digits
+        otp.select(2, 4);
+        otp.replaceSelection("xyz");
+        assertEquals("12345678", otp.getText());
+
+        // Replacing a 2-digit selection with digits respects remaining capacity (2)
+        otp.select(2, 4);
+        otp.replaceSelection("9876");
+        assertEquals("12985678", otp.getText());
+
+        // Clearing the field works cleanly
+        otp.setText("");
+        assertEquals("", otp.getText());
+
+        // Appending mixed text respects remaining capacity
+        doc.insertString(0, "12345", null);
+        doc.insertString(doc.getLength(), "a6b7c8d9e0", null);
+        assertEquals("12345678", otp.getText());
+    }
+
+    @Test
+    void isValidVerificationCodeRequiresExactlyEightDigits() {
+        assertTrue(InputFilters.isValidVerificationCode("12345678"));
+        assertTrue(InputFilters.isValidVerificationCode(" 00123456 "));
+
+        assertFalse(InputFilters.isValidVerificationCode(null));
+        assertFalse(InputFilters.isValidVerificationCode(""));
+        assertFalse(InputFilters.isValidVerificationCode("   "));
+        assertFalse(InputFilters.isValidVerificationCode("1234567"));
+        assertFalse(InputFilters.isValidVerificationCode("123456789"));
+        assertFalse(InputFilters.isValidVerificationCode("1234abcd"));
+        assertFalse(InputFilters.isValidVerificationCode("dfddfsfdsfsfsf"));
+    }
 }

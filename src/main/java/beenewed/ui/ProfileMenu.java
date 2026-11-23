@@ -56,15 +56,29 @@ public final class ProfileMenu extends JPopupMenu {
 
     private JComponent buildHeader(String email, Instant signedInAt) {
         JComponent avatar = new JComponent() {
-            { setPreferredSize(new Dimension(36, 36)); setMinimumSize(getPreferredSize()); }
+            {
+                setOpaque(false);
+                Dimension avatarSize = new Dimension(36, 36);
+                setPreferredSize(avatarSize);
+                setMinimumSize(avatarSize);
+                setMaximumSize(avatarSize);
+            }
             @Override protected void paintComponent(Graphics g0) {
-                Graphics2D g = (Graphics2D) g0.create(); UI.aa(g);
-                g.setColor(Theme.PRIMARY_LIGHT);
-                g.fillOval(0, 0, getWidth() - 1, getHeight() - 1);
-                Icons.of(Icons.Type.USER, 20, Theme.ACCENT).paintIcon(this, g, (getWidth() - 20) / 2, (getHeight() - 20) / 2);
-                g.dispose();
+                UI.paintCircularAvatar(
+                        (Graphics2D) g0,
+                        this,
+                        getWidth(),
+                        getHeight(),
+                        null,
+                        Icons.of(Icons.Type.USER, 20, Theme.ACCENT),
+                        Theme.PRIMARY_LIGHT,
+                        Theme.BORDER_STRONG,
+                        1f);
             }
         };
+        avatar.setName("profileMenuAvatar");
+        JPanel avatarWrap = UI.clear(new GridBagLayout());
+        avatarWrap.add(avatar);
 
         String shownEmail = email == null || email.isBlank() ? "Signed-in account" : email;
         JLabel caption = UI.label("Signed in as", Theme.TINY, Theme.MUTED);
@@ -94,7 +108,7 @@ public final class ProfileMenu extends JPopupMenu {
         JPanel header = new JPanel(new BorderLayout(10, 0));
         header.setOpaque(false);
         header.setBorder(new EmptyBorder(8, 12, 8, 12));
-        header.add(avatar, BorderLayout.WEST);
+        header.add(avatarWrap, BorderLayout.WEST);
         header.add(text, BorderLayout.CENTER);
         header.setPreferredSize(new Dimension(WIDTH, header.getPreferredSize().height));
         AccessibleContext ctx = header.getAccessibleContext();

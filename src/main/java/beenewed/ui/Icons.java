@@ -1,8 +1,17 @@
 package beenewed.ui;
 
+import javax.imageio.ImageIO;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.geom.*;
+import java.awt.image.BufferedImage;
+import java.io.IOException;
+import java.net.URL;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Simple line icons drawn with Java2D on a 24x24 grid, so the app needs no image files.
@@ -33,6 +42,125 @@ public final class Icons {
 
     public static Icon of(Type t, int size, Color c) { return new VIcon(t, size, c, 2.0f); }
     public static Icon of(Type t, int size, Color c, float stroke) { return new VIcon(t, size, c, stroke); }
+
+    // ---- Brand logo (/icons/logo.png) ----------------------------------
+    private static final String[] BRAND_LOGO_PATHS = {"/icons/logo.png", "/icons/Beenewed Logo.png"};
+    private static volatile boolean brandLogoLoaded;
+    private static BufferedImage cachedBrandLogo;
+    private static final Map<Integer, ImageIcon> SCALED_LOGO_ICONS = new ConcurrentHashMap<>();
+    private static volatile List<Image> cachedWindowIcons;
+
+    /**
+     * Loads the Beenewed brand logo from {@code /icons/logo.png} (with fallback to
+     * {@code /icons/Beenewed Logo.png}), returning {@code null} safely if missing or unreadable.
+     */
+    public static BufferedImage brandLogoImage() {
+        if (!brandLogoLoaded) {
+            synchronized (Icons.class) {
+                if (!brandLogoLoaded) {
+                    cachedBrandLogo = loadBrandLogoFromClasspath();
+                    brandLogoLoaded = true;
+                }
+            }
+        }
+        return cachedBrandLogo;
+    }
+
+    private static BufferedImage loadBrandLogoFromClasspath() {
+        for (String path : BRAND_LOGO_PATHS) {
+            URL url = Icons.class.getResource(path);
+            if (url == null) continue;
+            try {
+                BufferedImage img = ImageIO.read(url);
+                if (img != null && img.getWidth() > 0 && img.getHeight() > 0) {
+                    return img;
+                }
+            } catch (IOException ignored) {
+                // Try next candidate or fall back cleanly to null
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Returns the brand logo smoothly scaled to fit within {@code maxSize x maxSize}
+     * while preserving aspect ratio, or {@code null} if the image resource is missing.
+     */
+    public static ImageIcon brandLogoIcon(int maxSize) {
+        if (maxSize <= 0) return null;
+        BufferedImage src = brandLogoImage();
+        if (src == null) return null;
+        return SCALED_LOGO_ICONS.computeIfAbsent(maxSize, s -> new ImageIcon(scaleSmooth(src, s, s)));
+    }
+
+    /** Returns a smoothly scaled 64px window icon image, or {@code null} if missing. */
+    public static Image brandWindowIcon() {
+        ImageIcon icon = brandLogoIcon(64);
+        return icon == null ? null : icon.getImage();
+    }
+
+    /** Returns multi-resolution window icon images (16–128px) for crisp title bar/taskbar rendering. */
+    public static List<Image> brandWindowIcons() {
+        if (cachedWindowIcons == null) {
+            synchronized (Icons.class) {
+                if (cachedWindowIcons == null) {
+                    BufferedImage src = brandLogoImage();
+                    if (src == null) {
+                        cachedWindowIcons = List.of();
+                    } else {
+                        int[] sizes = {16, 24, 32, 48, 64, 128};
+                        List<Image> list = new ArrayList<>(sizes.length);
+                        for (int s : sizes) {
+                            list.add(scaleSmooth(src, s, s));
+                        }
+                        cachedWindowIcons = Collections.unmodifiableList(list);
+                    }
+                }
+            }
+        }
+        return cachedWindowIcons;
+    }
+
+    /**
+     * Smoothly scales {@code src} to fit inside {@code maxWidth x maxHeight} while preserving
+     * aspect ratio, using progressive multi-step bicubic downscaling for crisp small icons.
+     */
+    private static BufferedImage scaleSmooth(BufferedImage src, int maxWidth, int maxHeight) {
+        int srcW = src.getWidth();
+        int srcH = src.getHeight();
+        double ratio = Math.min((double) maxWidth / srcW, (double) maxHeight / srcH);
+        int targetW = Math.max(1, (int) Math.round(srcW * ratio));
+        int targetH = Math.max(1, (int) Math.round(srcH * ratio));
+
+        BufferedImage current = src;
+        int curW = srcW;
+        int curH = srcH;
+        while (curW / 2 >= targetW && curH / 2 >= targetH) {
+            int nextW = Math.max(targetW, curW / 2);
+            int nextH = Math.max(targetH, curH / 2);
+            current = drawScaled(current, nextW, nextH);
+            curW = nextW;
+            curH = nextH;
+        }
+        if (curW != targetW || curH != targetH) {
+            current = drawScaled(current, targetW, targetH);
+        }
+        return current;
+    }
+
+    private static BufferedImage drawScaled(BufferedImage src, int w, int h) {
+        BufferedImage dst = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = dst.createGraphics();
+        try {
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+            g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g.drawImage(src, 0, 0, w, h, null);
+        } finally {
+            g.dispose();
+        }
+        return dst;
+    }
 
     static final class VIcon implements Icon {
         final Type type; final int size; final Color color; final float stroke;

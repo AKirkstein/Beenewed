@@ -39,7 +39,8 @@ public class SubscriptionsScreen extends JPanel {
         // ---- Filter bar
         search.setBorder(new UI.FieldBorder(8, 34));
         JLayeredPane searchWrap = new JLayeredPane() {
-            @Override public Dimension getPreferredSize() { return new Dimension(260, search.getPreferredSize().height); }
+            @Override public Dimension getPreferredSize() { return new Dimension(220, search.getPreferredSize().height); }
+            @Override public Dimension getMinimumSize() { return new Dimension(170, search.getPreferredSize().height); }
             @Override public void doLayout() { search.setBounds(0, 0, getWidth(), getHeight()); icon.setBounds(11, 0, 18, getHeight()); }
             final JLabel icon = new JLabel(Icons.of(Icons.Type.SEARCH, 15, Theme.MUTED));
             { add(search, JLayeredPane.DEFAULT_LAYER); add(icon, JLayeredPane.PALETTE_LAYER); }
@@ -51,14 +52,14 @@ public class SubscriptionsScreen extends JPanel {
         });
         category.addActionListener(e -> refresh());
         status.addActionListener(e -> refresh());
-        category.setPreferredSize(new Dimension(160, category.getPreferredSize().height));
-        status.setPreferredSize(new Dimension(140, status.getPreferredSize().height));
+        category.withMinWidth(165);
+        status.withMinWidth(145);
         UI.Btn reset = UI.soft("Reset", Icons.Type.FILTER).small();
         reset.setForeground(Theme.TEXT_2);
         reset.addActionListener(e -> { search.setText(""); category.setSelectedIndex(0); status.setSelectedIndex(0); });
         showing.setIcon(Icons.of(Icons.Type.SLIDERS, 14, Theme.MUTED));
 
-        UI.RoundPanel filters = UI.card(new BorderLayout(), 12);
+        UI.RoundPanel filters = UI.card(new BorderLayout(12, 0), 12);
         JPanel left = UI.hrow(10, searchWrap, category, status, reset);
         filters.add(left, BorderLayout.WEST);
         filters.add(showing, BorderLayout.EAST);

@@ -41,7 +41,7 @@ public class ReportsScreen extends JPanel {
     private final UI.Combo<Integer> year;
     private final UI.Combo<String> estimate = new UI.Combo<>("Monthly Equivalent", "Annual Equivalent");
     private final UI.Combo<String> forecastHorizon = new UI.Combo<>(HORIZON_LABELS);
-    private final JPanel filterRow = UI.clear(new FlowLayout(FlowLayout.LEFT, 14, 0));
+    private final JPanel filterRow = UI.clear(new FlowLayout(FlowLayout.LEFT, 14, 6));
     private final JPanel applyBar = UI.clear(new FlowLayout(FlowLayout.LEFT, 0, 0));
     private final JPanel results = UI.clear(new BorderLayout());
 
@@ -72,11 +72,11 @@ public class ReportsScreen extends JPanel {
         estimate.addActionListener(e -> { if (aBasis == 1) apply(); });
         forecastHorizon.addActionListener(e -> { if (aBasis == 1) apply(); });
 
-        period.setPreferredSize(new Dimension(118, period.getPreferredSize().height));
-        month.setPreferredSize(new Dimension(130, month.getPreferredSize().height));
-        year.setPreferredSize(new Dimension(100, year.getPreferredSize().height));
-        estimate.setPreferredSize(new Dimension(190, estimate.getPreferredSize().height));
-        forecastHorizon.setPreferredSize(new Dimension(130, forecastHorizon.getPreferredSize().height));
+        period.withMinWidth(130);
+        month.withMinWidth(145);
+        year.withMinWidth(100);
+        estimate.withMinWidth(195);
+        forecastHorizon.withMinWidth(140);
         basis.setPreferredSize(new Dimension(420, 40));
 
         UI.Btn applyBtn = UI.ghost("Apply Filters", Icons.Type.FILTER).small();

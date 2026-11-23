@@ -8,6 +8,7 @@ import javax.swing.plaf.basic.BasicComboBoxUI;
 import javax.swing.plaf.basic.BasicScrollBarUI;
 import java.awt.*;
 import java.awt.event.*;
+import java.awt.geom.Ellipse2D;
 import java.awt.geom.RoundRectangle2D;
 import java.util.function.Consumer;
 
@@ -131,6 +132,122 @@ public final class UI {
         Dimension d = new Dimension(box, box);
         p.setPreferredSize(d); p.setMinimumSize(d); p.setMaximumSize(d);
         return p;
+    }
+
+    /**
+     * Creates the Beenewed brand logo component at {@code size x size} using {@code /icons/logo.png}
+     * smoothly scaled with aspect ratio preserved, or falls back cleanly to the vector badge if missing.
+     */
+    public static JComponent brandLogo(int size, int fallbackCornerRadius, int fallbackIconSize) {
+        Dimension dim = new Dimension(size, size);
+        ImageIcon icon = Icons.brandLogoIcon(size);
+        if (icon != null) {
+            JLabel lbl = new JLabel(icon, SwingConstants.CENTER);
+            lbl.setOpaque(false);
+            lbl.setPreferredSize(dim);
+            lbl.setMinimumSize(dim);
+            lbl.setMaximumSize(dim);
+            return lbl;
+        }
+        RoundPanel fallback = new RoundPanel(new GridBagLayout(), fallbackCornerRadius, Theme.PRIMARY, null);
+        fallback.add(new JLabel(Icons.of(Icons.Type.WALLET, fallbackIconSize, Theme.ON_PRIMARY)));
+        fallback.setPreferredSize(dim);
+        fallback.setMinimumSize(dim);
+        fallback.setMaximumSize(dim);
+        return fallback;
+    }
+
+    /**
+     * Applies the Beenewed brand icon to a {@link Window} (JFrame or JDialog) if available,
+     * safely doing nothing when {@code window} or the logo image resource is missing.
+     */
+    public static void applyWindowIcon(Window window) {
+        if (window == null) return;
+        java.util.List<Image> icons = Icons.brandWindowIcons();
+        if (!icons.isEmpty()) {
+            window.setIconImages(icons);
+        } else {
+            Image single = Icons.brandWindowIcon();
+            if (single != null) {
+                window.setIconImage(single);
+            }
+        }
+    }
+
+    /**
+     * Paints a true circular avatar centered inside the component's bounds using
+     * antialiasing and {@link Ellipse2D.Double} circular clipping.
+     * Supports either a center-cropped {@link Image} or a centered fallback {@link Icon},
+     * with an optional circular border ring.
+     */
+    public static void paintCircularAvatar(
+            Graphics2D g0,
+            Component owner,
+            int width,
+            int height,
+            Image photo,
+            Icon fallbackIcon,
+            Color bg,
+            Color borderColor,
+            float borderWidth) {
+        int diameter = Math.min(width, height);
+        if (diameter <= 0) return;
+
+        double pad = borderWidth > 0f ? borderWidth / 2.0 : 0.5;
+        double d = Math.max(1.0, diameter - pad * 2.0);
+        double x = (width - d) / 2.0;
+        double y = (height - d) / 2.0;
+
+        Graphics2D g = (Graphics2D) g0.create();
+        try {
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+            g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
+
+            Ellipse2D.Double circle = new Ellipse2D.Double(x, y, d, d);
+
+            Graphics2D clipped = (Graphics2D) g.create();
+            try {
+                clipped.clip(circle);
+                if (bg != null) {
+                    clipped.setColor(bg);
+                    clipped.fill(circle);
+                }
+                if (photo != null) {
+                    int imgW = photo.getWidth(owner);
+                    int imgH = photo.getHeight(owner);
+                    if (imgW > 0 && imgH > 0) {
+                        double scale = Math.max(d / imgW, d / imgH);
+                        double drawW = imgW * scale;
+                        double drawH = imgH * scale;
+                        double drawX = x + (d - drawW) / 2.0;
+                        double drawY = y + (d - drawH) / 2.0;
+                        clipped.drawImage(
+                                photo,
+                                (int) Math.floor(drawX),
+                                (int) Math.floor(drawY),
+                                (int) Math.ceil(drawW),
+                                (int) Math.ceil(drawH),
+                                owner);
+                    }
+                } else if (fallbackIcon != null) {
+                    int ix = (int) Math.round(x + (d - fallbackIcon.getIconWidth()) / 2.0);
+                    int iy = (int) Math.round(y + (d - fallbackIcon.getIconHeight()) / 2.0);
+                    fallbackIcon.paintIcon(owner, clipped, ix, iy);
+                }
+            } finally {
+                clipped.dispose();
+            }
+
+            if (borderColor != null && borderWidth > 0f) {
+                g.setColor(borderColor);
+                g.setStroke(new BasicStroke(borderWidth));
+                g.draw(circle);
+            }
+        } finally {
+            g.dispose();
+        }
     }
 
     /** Coloured info / note panel with an icon, optional bold title and body. */
@@ -460,6 +577,8 @@ public final class UI {
 
     /** Combo box styled like the design's dropdowns. */
     public static class Combo<T> extends JComboBox<T> {
+        private static final int ARROW_WIDTH = 22;
+
         @SafeVarargs
         public Combo(T... items) {
             super(items);
@@ -467,15 +586,50 @@ public final class UI {
             setForeground(Theme.TEXT);
             setBackground(Theme.FIELD_BG);
             setOpaque(false);
+            putClientProperty("JComponent.roundRect", true);
             setBorder(new FieldBorder(4, 6));
             setUI(new BasicComboBoxUI() {
+                @Override protected void installDefaults() {
+                    super.installDefaults();
+                    // Avoid stacking FlatLaf's default ComboBox.padding on top of FieldBorder + renderer padding.
+                    padding = new Insets(0, 0, 0, 0);
+                }
                 @Override protected JButton createArrowButton() {
                     JButton b = new JButton(Icons.of(Icons.Type.CHEVRON_DOWN, 14, Theme.MUTED));
-                    b.setBorder(new EmptyBorder(0, 4, 0, 6));
+                    b.setBorder(new EmptyBorder(0, 2, 0, 4));
                     b.setContentAreaFilled(false);
                     b.setFocusPainted(false);
                     b.setOpaque(false);
                     return b;
+                }
+                @Override protected LayoutManager createLayoutManager() {
+                    return new ComboBoxLayoutManager() {
+                        @Override public void layoutContainer(Container parent) {
+                            JComboBox<?> cb = (JComboBox<?>) parent;
+                            int w = cb.getWidth();
+                            int h = cb.getHeight();
+                            Insets in = cb.getInsets();
+                            int innerH = Math.max(0, h - (in.top + in.bottom));
+                            int arrowW = Math.min(ARROW_WIDTH, Math.max(18, innerH));
+                            if (arrowButton != null) {
+                                arrowButton.setBounds(w - in.right - arrowW, in.top, arrowW, innerH);
+                            }
+                            if (editor != null) {
+                                editor.setBounds(rectangleForCurrentValue());
+                            }
+                        }
+                    };
+                }
+                @Override protected Rectangle rectangleForCurrentValue() {
+                    int w = comboBox.getWidth();
+                    int h = comboBox.getHeight();
+                    Insets in = getInsets();
+                    int arrowW = arrowButton != null ? arrowButton.getWidth() : ARROW_WIDTH;
+                    return new Rectangle(
+                            in.left,
+                            in.top,
+                            Math.max(0, w - in.left - in.right - arrowW),
+                            Math.max(0, h - in.top - in.bottom));
                 }
                 @Override public void paintCurrentValueBackground(Graphics g, Rectangle bounds, boolean hasFocus) { }
                 @Override public void paint(Graphics g, JComponent c) {
@@ -487,9 +641,15 @@ public final class UI {
                 @Override public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean sel, boolean focus) {
                     JLabel l = (JLabel) super.getListCellRendererComponent(list, value, index, sel, focus);
                     l.setFont(Theme.BODY);
-                    l.setBorder(new EmptyBorder(6, 8, 6, 8));
-                    if (index == -1) { l.setOpaque(false); l.setForeground(Combo.this.isEnabled() ? Theme.TEXT : Theme.MUTED); }
-                    else { l.setBackground(sel ? Theme.PRIMARY_LIGHT : Theme.ELEVATED); l.setForeground(sel ? Theme.ACCENT : Theme.TEXT); }
+                    if (index == -1) {
+                        l.setBorder(new EmptyBorder(4, 6, 4, 2));
+                        l.setOpaque(false);
+                        l.setForeground(Combo.this.isEnabled() ? Theme.TEXT : Theme.MUTED);
+                    } else {
+                        l.setBorder(new EmptyBorder(6, 10, 6, 10));
+                        l.setBackground(sel ? Theme.PRIMARY_LIGHT : Theme.ELEVATED);
+                        l.setForeground(sel ? Theme.ACCENT : Theme.TEXT);
+                    }
                     return l;
                 }
             });
@@ -500,6 +660,24 @@ public final class UI {
         }
         @SuppressWarnings("unchecked")
         public T selected() { return (T) getSelectedItem(); }
+
+        /**
+         * Ensures the combo box is at least {@code minWidth} wide (and wide enough for its
+         * longest item) with a consistent minimum height so filter labels never truncate.
+         */
+        public Combo<T> withMinWidth(int minWidth) {
+            Dimension natural = super.getPreferredSize();
+            int w = Math.max(minWidth, natural.width + 6);
+            int h = Math.max(36, natural.height);
+            Dimension sized = new Dimension(w, h);
+            setPreferredSize(sized);
+            setMinimumSize(sized);
+            return this;
+        }
+
+        @Override public Dimension getMinimumSize() {
+            return isPreferredSizeSet() ? getPreferredSize() : super.getMinimumSize();
+        }
         @Override public Dimension getMaximumSize() {
             return isPreferredSizeSet() ? getPreferredSize() : new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
         }

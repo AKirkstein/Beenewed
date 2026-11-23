@@ -22,10 +22,15 @@ import java.util.regex.Pattern;
 public final class InputFilters {
     private InputFilters() {}
 
+    /** Standard length of an email OTP verification code. */
+    public static final int OTP_CODE_LENGTH = 8;
+
     /** Allows digits with at most one decimal point and up to 2 fractional digits while typing. */
     private static final Pattern DECIMAL_TYPING = Pattern.compile("^\\d*(?:\\.\\d{0,2})?$");
     /** Strict submission pattern: digits with optional 1–2 decimal places (or leading dot with 1–2 digits). */
     private static final Pattern DECIMAL_COMPLETE = Pattern.compile("^(?:\\d+(?:\\.\\d{1,2})?|\\.\\d{1,2})$");
+    /** Strict 8-digit verification code pattern. */
+    private static final Pattern OTP_CODE_PATTERN = Pattern.compile("^\\d{" + OTP_CODE_LENGTH + "}$");
 
     private static final DateTimeFormatter STRICT_SLASH_PADDED =
             DateTimeFormatter.ofPattern("MM/dd/uuuu", Locale.ENGLISH).withResolverStyle(ResolverStyle.STRICT);
@@ -46,6 +51,21 @@ public final class InputFilters {
         if (field.getDocument() instanceof AbstractDocument doc) {
             doc.setDocumentFilter(new DateDocumentFilter());
         }
+    }
+
+    /** Restricts a text field to ASCII digits (0-9) up to {@code maxLength} characters. */
+    public static void installDigitsFilter(JTextField field, int maxLength) {
+        if (maxLength <= 0) {
+            throw new IllegalArgumentException("maxLength must be positive");
+        }
+        if (field.getDocument() instanceof AbstractDocument doc) {
+            doc.setDocumentFilter(new DigitsDocumentFilter(maxLength));
+        }
+    }
+
+    /** Returns {@code true} only if {@code text} (after trimming) is a strict 8-digit verification code. */
+    public static boolean isValidVerificationCode(String text) {
+        return text != null && OTP_CODE_PATTERN.matcher(text.trim()).matches();
     }
 
     /**
@@ -198,6 +218,65 @@ public final class InputFilters {
             if (isAllowedDateCandidate(candidate)) {
                 super.remove(fb, offset, length);
             }
+        }
+    }
+
+    static final class DigitsDocumentFilter extends DocumentFilter {
+        private final int maxLength;
+
+        DigitsDocumentFilter(int maxLength) {
+            this.maxLength = maxLength;
+        }
+
+        @Override
+        public void insertString(FilterBypass fb, int offset, String string, AttributeSet attr)
+                throws BadLocationException {
+            if (string == null || string.isEmpty()) {
+                return;
+            }
+            String digits = stripNonDigits(string);
+            if (digits.isEmpty()) {
+                return;
+            }
+            int remaining = maxLength - fb.getDocument().getLength();
+            if (remaining <= 0) {
+                return;
+            }
+            String toInsert = digits.length() > remaining ? digits.substring(0, remaining) : digits;
+            super.insertString(fb, offset, toInsert, attr);
+        }
+
+        @Override
+        public void replace(FilterBypass fb, int offset, int length, String text, AttributeSet attrs)
+                throws BadLocationException {
+            if (text == null || text.isEmpty()) {
+                if (length > 0) {
+                    super.replace(fb, offset, length, "", attrs);
+                }
+                return;
+            }
+            String digits = stripNonDigits(text);
+            if (digits.isEmpty()) {
+                return;
+            }
+            int currentLength = fb.getDocument().getLength();
+            int remaining = maxLength - (currentLength - length);
+            if (remaining <= 0) {
+                return;
+            }
+            String toInsert = digits.length() > remaining ? digits.substring(0, remaining) : digits;
+            super.replace(fb, offset, length, toInsert, attrs);
+        }
+
+        private static String stripNonDigits(String input) {
+            StringBuilder sb = new StringBuilder(input.length());
+            for (int i = 0; i < input.length(); i++) {
+                char c = input.charAt(i);
+                if (c >= '0' && c <= '9') {
+                    sb.append(c);
+                }
+            }
+            return sb.toString();
         }
     }
 }

@@ -34,7 +34,7 @@ public class RenewalsScreen extends JPanel {
         tabs.add("Upcoming Renewals", Icons.Type.CALENDAR, "0").add("Payment History", Icons.Type.HISTORY, null);
         tabs.onSelect(i -> refresh());
         for (UI.Combo<String> c : List.of(dueFilter, upStatus, payDate, payStatus)) {
-            c.setPreferredSize(new Dimension(130, c.getPreferredSize().height));
+            c.withMinWidth(145);
             c.addActionListener(e -> refresh());
         }
         paySearch.getDocument().addDocumentListener(new DocumentListener() {
@@ -150,7 +150,8 @@ public class RenewalsScreen extends JPanel {
         JLayeredPane searchWrap = new JLayeredPane() {
             final JLabel icon = new JLabel(Icons.of(Icons.Type.SEARCH, 15, Theme.MUTED));
             { add(paySearch, JLayeredPane.DEFAULT_LAYER); add(icon, JLayeredPane.PALETTE_LAYER); }
-            @Override public Dimension getPreferredSize() { return new Dimension(300, paySearch.getPreferredSize().height); }
+            @Override public Dimension getPreferredSize() { return new Dimension(240, paySearch.getPreferredSize().height); }
+            @Override public Dimension getMinimumSize() { return new Dimension(160, paySearch.getPreferredSize().height); }
             @Override public Dimension getMaximumSize() { return new Dimension(Integer.MAX_VALUE, getPreferredSize().height); }
             @Override public void doLayout() { paySearch.setBounds(0, 0, getWidth(), getHeight()); icon.setBounds(11, 0, 18, getHeight()); }
         };

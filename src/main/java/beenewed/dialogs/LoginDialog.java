@@ -1,6 +1,7 @@
 package beenewed.dialogs;
 
 import beenewed.ui.Icons;
+import beenewed.ui.InputFilters;
 import beenewed.ui.Theme;
 import beenewed.ui.UI;
 import com.beenewed.supabase.LocalSnapshotCache;
@@ -71,7 +72,7 @@ public final class LoginDialog extends JDialog {
     private final UI.TextField emailField = new UI.TextField("you@example.com");
     private final UI.PasswordField passwordField = new UI.PasswordField("Enter your password");
     private final UI.PasswordField confirmPasswordField = new UI.PasswordField("Re-enter your password");
-    private final UI.TextField otpField = new UI.TextField("Enter verification code");
+    private final UI.TextField otpField = new UI.TextField("Enter 8-digit verification code");
     /** Look-and-feel echo character captured before any reveal toggling. */
     private final char defaultEchoChar = passwordField.getEchoChar() != 0 ? passwordField.getEchoChar() : '\u2022';
 
@@ -131,6 +132,7 @@ public final class LoginDialog extends JDialog {
                 ? connectivityChecker
                 : (authService == null ? () -> true : authService::isServerReachable);
 
+        UI.applyWindowIcon(this);
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setResizable(false);
 
@@ -141,11 +143,8 @@ public final class LoginDialog extends JDialog {
         UI.RoundPanel card = new UI.RoundPanel(new BorderLayout(), 14, Theme.SURFACE, Theme.BORDER);
         card.setBorder(new EmptyBorder(24, 26, 22, 26));
 
-        // Brand header
-        UI.RoundPanel logo = new UI.RoundPanel(new GridBagLayout(), 8, Theme.PRIMARY, null);
-        logo.add(new JLabel(Icons.of(Icons.Type.WALLET, 16, Theme.ON_PRIMARY)));
-        logo.setPreferredSize(new Dimension(28, 28));
-        logo.setMaximumSize(new Dimension(28, 28));
+        // Brand header (shown across Sign In, Create Account, and Verify Email modes)
+        JComponent logo = UI.brandLogo(32, 8, 16);
         JPanel brandRow = UI.hrow(10, logo, UI.label("Beenewed", Theme.H2, Theme.TEXT));
         brandRow.setBorder(new EmptyBorder(0, 0, 16, 0));
 
@@ -236,6 +235,7 @@ public final class LoginDialog extends JDialog {
         passwordSection = dynamicSection(12, fieldLabel("Password"), passwordField, strengthPanel);
         confirmSection = dynamicSection(12, fieldLabel("Confirm Password"), confirmPasswordField, matchHint);
         confirmSection.setVisible(false);
+        InputFilters.installDigitsFilter(otpField, InputFilters.OTP_CODE_LENGTH);
         otpSection = labeledField("Verification Code", otpField, 14);
         otpSection.setVisible(false);
 
@@ -737,9 +737,11 @@ public final class LoginDialog extends JDialog {
 
     private void submitVerifyOtp() {
         String code = otpField.getText().trim();
-        if (code.isEmpty()) {
+        if (!InputFilters.isValidVerificationCode(code)) {
             UI.setError(otpField, true);
-            showBanner("Please enter the verification code from your email.", true);
+            showBanner(code.isEmpty()
+                    ? "Please enter the 8-digit verification code from your email."
+                    : "Verification code must be exactly 8 digits.", true);
             otpField.requestFocusInWindow();
             return;
         }

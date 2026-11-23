@@ -72,6 +72,7 @@ public class App extends JFrame {
         this.restClient = restClient;
         this.localCache = localCache;
         instance = this;
+        UI.applyWindowIcon(this);
         setDefaultCloseOperation(DO_NOTHING_ON_CLOSE);
         addWindowListener(new WindowAdapter() {
             @Override
@@ -377,8 +378,10 @@ public class App extends JFrame {
             boolean hover;
             {
                 setOpaque(false);
-                setPreferredSize(new Dimension(32, 32));
-                setMaximumSize(getPreferredSize());
+                Dimension avatarSize = new Dimension(32, 32);
+                setPreferredSize(avatarSize);
+                setMinimumSize(avatarSize);
+                setMaximumSize(avatarSize);
                 setToolTipText(profileTip);
                 setFocusable(true);
                 setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
@@ -421,20 +424,17 @@ public class App extends JFrame {
                 return accessibleContext;
             }
             @Override protected void paintComponent(Graphics g0) {
-                Graphics2D g = (Graphics2D) g0.create(); UI.aa(g);
                 boolean active = hover || isFocusOwner();
-                g.setColor(active ? Theme.SOFT_HOVER : Theme.PRIMARY_LIGHT);
-                g.fillOval(0, 0, getWidth() - 1, getHeight() - 1);
-                if (active) {
-                    g.setColor(Theme.PRIMARY);
-                    g.setStroke(new BasicStroke(2f));
-                    g.drawOval(1, 1, getWidth() - 3, getHeight() - 3);
-                } else {
-                    g.setColor(Theme.BORDER_STRONG);
-                    g.drawOval(0, 0, getWidth() - 1, getHeight() - 1);
-                }
-                Icons.of(Icons.Type.USER, 18, Theme.ACCENT).paintIcon(this, g, (getWidth() - 18) / 2, (getHeight() - 18) / 2);
-                g.dispose();
+                UI.paintCircularAvatar(
+                        (Graphics2D) g0,
+                        this,
+                        getWidth(),
+                        getHeight(),
+                        null,
+                        Icons.of(Icons.Type.USER, 18, Theme.ACCENT),
+                        active ? Theme.SOFT_HOVER : Theme.PRIMARY_LIGHT,
+                        active ? Theme.PRIMARY : Theme.BORDER_STRONG,
+                        active ? 2f : 1f);
             }
         };
 
@@ -523,10 +523,7 @@ public class App extends JFrame {
         side.setBorder(BorderFactory.createMatteBorder(0, 0, 0, 1, Theme.BORDER));
 
         // Brand
-        UI.RoundPanel logo = new UI.RoundPanel(new GridBagLayout(), 6, Theme.PRIMARY, null);
-        logo.add(new JLabel(Icons.of(Icons.Type.WALLET, 15, Theme.ON_PRIMARY)));
-        logo.setPreferredSize(new Dimension(24, 24));
-        logo.setMaximumSize(new Dimension(24, 24));
+        JComponent logo = UI.brandLogo(28, 6, 15);
         JPanel brand = UI.hrow(10, logo, UI.label("Beenewed", Theme.BODY_B, Theme.TEXT));
         brand.setBorder(new EmptyBorder(0, 16, 0, 16));
         JPanel brandBar = new JPanel(new BorderLayout());
