@@ -803,18 +803,22 @@ public final class Store {
     }
 
     public void saveTheme(boolean dark) {
-        withBackend(() -> {
-            com.beenewed.backend.model.Theme nextTheme = dark
-                    ? com.beenewed.backend.model.Theme.DARK
-                    : com.beenewed.backend.model.Theme.LIGHT;
-            String currentCurrency;
-            int currentLeadDays;
-            boolean currentOverdue;
-            synchronized (cacheLock) {
-                currentCurrency = currency;
-                currentLeadDays = remindDays;
-                currentOverdue = showOverdue;
-            }
+        com.beenewed.backend.model.Theme nextTheme = dark
+                ? com.beenewed.backend.model.Theme.DARK
+                : com.beenewed.backend.model.Theme.LIGHT;
+        String currentCurrency;
+        int currentLeadDays;
+        boolean currentOverdue;
+        synchronized (cacheLock) {
+            theme = nextTheme;
+            currentCurrency = currency;
+            currentLeadDays = remindDays;
+            currentOverdue = showOverdue;
+        }
+        if (offline) {
+            return;
+        }
+        try {
             com.beenewed.backend.model.AppPreferences saved = supabase.updatePreferences(
                     new com.beenewed.backend.model.AppPreferences(
                             1L,
@@ -828,8 +832,15 @@ public final class Store {
                 remindDays = saved.reminderLeadDays();
                 showOverdue = saved.showOverdueReminders();
             }
-            return null;
-        });
+            persistCurrentStateToCache();
+        } catch (SupabaseException exception) {
+            if (SupabaseRestClient.isConnectivityFailure(exception)) {
+                this.offline = true;
+                this.offlineReason = exception.getMessage();
+            }
+            // Theme toggling is a local client appearance preference; keep the local
+            // theme applied without throwing or blocking if remote sync cannot complete.
+        }
     }
 
     // =====================================================================

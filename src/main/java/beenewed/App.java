@@ -10,6 +10,9 @@ import com.beenewed.supabase.SupabaseAuthService;
 import com.beenewed.supabase.SupabaseConfig;
 import com.beenewed.supabase.SupabaseException;
 import com.beenewed.supabase.SupabaseRestClient;
+import com.formdev.flatlaf.FlatDarkLaf;
+import com.formdev.flatlaf.FlatLaf;
+import com.formdev.flatlaf.FlatLightLaf;
 
 import javax.accessibility.AccessibleContext;
 import javax.accessibility.AccessibleRole;
@@ -146,7 +149,7 @@ public class App extends JFrame {
         instance = null;
 
         Theme.apply(false);
-        installUIColors();
+        installLookAndFeel(false);
         SwingUtilities.invokeLater(() -> launchWithLogin(authService, restClient, localCache));
     }
 
@@ -461,13 +464,19 @@ public class App extends JFrame {
     // ---- Light / Dark mode ---------------------------------------------
     /**
      * Switches the whole application between Light and Dark mode immediately.
-     * Rebuilds every screen in place with the new colours, keeps you on the same page,
-     * and persists the choice to Supabase in the background.
+     * Switches the FlatLaf look-and-feel and rebuilds every screen in place with
+     * the new colours, keeps you on the same page, and persists the choice to
+     * Supabase on a best-effort basis when online (never blocked by offline mode).
      */
     public void setDarkMode(boolean dark) {
         if (dark == Theme.isDark()) return;
-        boolean previousDark = Theme.isDark();
         applyThemeToWindow(dark);
+
+        if (!Store.isInitialized()) return;
+        if (Store.get().isOffline()) {
+            Store.get().saveTheme(dark);
+            return;
+        }
 
         new SwingWorker<Void, Void>() {
             @Override
@@ -482,19 +491,10 @@ public class App extends JFrame {
                     get();
                 } catch (InterruptedException error) {
                     Thread.currentThread().interrupt();
-                } catch (java.util.concurrent.ExecutionException error) {
-                    Throwable cause = error.getCause();
-                    applyThemeToWindow(previousDark);
-                    if (cause instanceof RuntimeException runtime) {
-                        Common.showBackendError(App.this, runtime);
-                    } else {
-                        JOptionPane.showMessageDialog(
-                                App.this,
-                                cause == null ? "Unable to save theme preference." : cause.getMessage(),
-                                "Unable to save theme",
-                                JOptionPane.ERROR_MESSAGE);
-                    }
+                } catch (java.util.concurrent.ExecutionException ignored) {
+                    // Best-effort remote sync; keep the local theme applied.
                 }
+                updateConnectivityBanner();
             }
         }.execute();
     }
@@ -506,12 +506,12 @@ public class App extends JFrame {
         int renewTab = renewals.getTab();
 
         Theme.apply(dark);
-        installUIColors();
+        installLookAndFeel(dark);
+        FlatLaf.updateUI();
         buildUI();
         if (detailSub != null) details.setSubscription(detailSub, detailTab);
         renewals.selectTab(renewTab);
         show(keep);
-        SwingUtilities.updateComponentTreeUI(getGlassPane());
         revalidate();
         repaint();
     }
@@ -640,7 +640,7 @@ public class App extends JFrame {
         System.setProperty("swing.aatext", "true");
         SwingUtilities.invokeLater(() -> {
             Theme.apply(false);
-            installLookAndFeel();
+            installLookAndFeel(false);
 
             SupabaseConfig config;
             try {
@@ -681,18 +681,19 @@ public class App extends JFrame {
             return;
         }
 
-        Theme.apply(Store.get().getTheme() == com.beenewed.backend.model.Theme.DARK);
-        installUIColors();
+        boolean dark = Store.get().getTheme() == com.beenewed.backend.model.Theme.DARK;
+        Theme.apply(dark);
+        installLookAndFeel(dark);
         new App(authService, restClient, localCache).setVisible(true);
     }
 
-    /** Uses FlatLaf if its jar is on the classpath (the design is a FlatLaf replica); otherwise the cross-platform look. */
-    private static void installLookAndFeel() {
-        try {
-            Class<?> flat = Class.forName("com.formdev.flatlaf.FlatLightLaf");
-            UIManager.setLookAndFeel((LookAndFeel) flat.getDeclaredConstructor().newInstance());
-        } catch (Exception noFlatLaf) {
-            try { UIManager.setLookAndFeel(UIManager.getCrossPlatformLookAndFeelClassName()); } catch (Exception ignored) {}
+    /** Installs FlatLaf (Light or Dark); falls back to the cross-platform look if setup fails. */
+    private static void installLookAndFeel(boolean dark) {
+        boolean installed = dark ? FlatDarkLaf.setup() : FlatLightLaf.setup();
+        if (!installed) {
+            try {
+                UIManager.setLookAndFeel(UIManager.getCrossPlatformLookAndFeelClassName());
+            } catch (Exception ignored) {}
         }
         installUIColors();
     }

@@ -25,7 +25,9 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -33,7 +35,8 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Verifies offline SQLite cache fallback, read-only mutation guard, fetch debouncing,
- * connectivity banner visibility, and clean executor/listener teardown on dispose/close.
+ * connectivity banner visibility, non-blocking local FlatLaf theme toggling while offline,
+ * and clean executor/listener teardown on dispose/close.
  */
 class OfflineResilienceTest {
 
@@ -41,6 +44,8 @@ class OfflineResilienceTest {
     private SupabaseAuthService auth;
     private SupabaseRestClient rest;
     private final AtomicInteger subscriptionGetCount = new AtomicInteger();
+    private final AtomicInteger preferencesPostCount = new AtomicInteger();
+    private volatile String serverTheme = "LIGHT";
 
     @AfterEach
     void cleanup() {
@@ -129,6 +134,100 @@ class OfflineResilienceTest {
         assertTrue(rest.isClosed());
     }
 
+    @Test
+    void offlineThemeToggleSwitchesFlatLafLocallyWithoutBlockingWhileMutationsStayBlocked(@TempDir Path tempDir)
+            throws Exception {
+        LocalSnapshotCache cache = new LocalSnapshotCache(tempDir.resolve("theme-offline.db"));
+        startMockServer();
+
+        SupabaseConfig cfg = new SupabaseConfig("http://127.0.0.1:" + server.getAddress().getPort(), "test-anon-key");
+        auth = new SupabaseAuthService(cfg);
+        auth.signIn("kirk@example.com", "Passw0rd!");
+        rest = new SupabaseRestClient(cfg, auth);
+
+        // 1. Online theme toggle persists to Supabase app_preferences
+        Store st = Store.initialize(rest, cache, auth.getUserId(), auth.getEmail());
+        assertEquals(com.beenewed.backend.model.Theme.LIGHT, st.getTheme());
+        st.saveTheme(true);
+        assertEquals(1, preferencesPostCount.get(), "Online theme toggle must sync to Supabase");
+        assertEquals("DARK", serverTheme);
+        assertEquals(com.beenewed.backend.model.Theme.DARK, st.getTheme());
+
+        // 2. Network drops mid-session: toggling theme still succeeds locally without throwing
+        server.stop(0);
+        server = null;
+
+        assertDoesNotThrow(() -> st.saveTheme(false));
+        assertTrue(st.isOffline(), "Connectivity failure during remote theme sync should mark store offline");
+        assertEquals(com.beenewed.backend.model.Theme.LIGHT, st.getTheme());
+
+        // 3. Cold-start offline mode: Store.saveTheme works locally without touching lastSyncedAt
+        Store.reset();
+        LocalSnapshotCache.CachedSnapshot saved = cache.loadLatest().orElseThrow();
+        Store offlineStore = Store.initializeOffline(rest, cache, saved);
+        assertTrue(offlineStore.isOffline());
+        Instant syncedBefore = offlineStore.getLastSyncedAt();
+
+        assertDoesNotThrow(() -> offlineStore.saveTheme(false));
+        assertEquals(com.beenewed.backend.model.Theme.LIGHT, offlineStore.getTheme());
+        assertDoesNotThrow(() -> offlineStore.saveTheme(true));
+        assertEquals(com.beenewed.backend.model.Theme.DARK, offlineStore.getTheme());
+        assertTrue(offlineStore.isOffline());
+        assertEquals(syncedBefore, offlineStore.getLastSyncedAt(),
+                "Local offline theme toggles must not overwrite lastSyncedAt");
+
+        // 4. Account data mutations (subscriptions, payments, splits) remain strictly blocked offline
+        Subscription existingSub = offlineStore.subscriptions.get(0);
+        Subscription extraSub = new Subscription(0, "BlockedSub", "Other", Icons.Type.OTHER,
+                99.00, Cycle.MONTHLY, LocalDate.now().plusDays(14));
+        ValidationException subErr = assertThrows(ValidationException.class,
+                () -> offlineStore.addSubscription(extraSub));
+        assertTrue(subErr.getMessage().toLowerCase().contains("offline"));
+
+        Payment extraPayment = new Payment(0, existingSub, LocalDate.now(), 549.00,
+                "December 2026", "GCash", null);
+        ValidationException payErr = assertThrows(ValidationException.class,
+                () -> offlineStore.recordPayment(extraPayment));
+        assertTrue(payErr.getMessage().toLowerCase().contains("offline"));
+
+        ValidationException splitErr = assertThrows(ValidationException.class,
+                () -> offlineStore.saveSplitConfiguration(
+                        existingSub, SplitAllocator.OWNER_KEY, true, SplitAllocator.SplitMode.EQUAL, Map.of()));
+        assertTrue(splitErr.getMessage().toLowerCase().contains("offline"));
+
+        // 5. UI theme toggle (header/SettingsScreen) switches FlatLaf locally with no modal block
+        if (!GraphicsEnvironment.isHeadless()) {
+            SwingUtilities.invokeAndWait(() -> {
+                Theme.apply(false);
+                App app = new App(auth, rest, cache);
+                try {
+                    assertTrue(isOfflineBannerVisible(app));
+
+                    // Toggle from Dashboard (header switch / profile menu path)
+                    app.setDarkMode(true);
+                    assertTrue(Theme.isDark(), "Theme palette must switch to Dark while offline");
+                    assertEquals("com.formdev.flatlaf.FlatDarkLaf",
+                            UIManager.getLookAndFeel().getClass().getName(),
+                            "FlatLaf must switch to FlatDarkLaf locally while offline");
+                    assertEquals(com.beenewed.backend.model.Theme.DARK, Store.get().getTheme());
+                    assertTrue(isOfflineBannerVisible(app), "Offline banner must stay visible after theme toggle");
+
+                    // Toggle from Settings screen back to Light
+                    app.show(App.Screen.SETTINGS);
+                    app.setDarkMode(false);
+                    assertFalse(Theme.isDark(), "Theme palette must switch back to Light while offline");
+                    assertEquals("com.formdev.flatlaf.FlatLightLaf",
+                            UIManager.getLookAndFeel().getClass().getName(),
+                            "FlatLaf must switch to FlatLightLaf locally while offline");
+                    assertEquals(com.beenewed.backend.model.Theme.LIGHT, Store.get().getTheme());
+                    assertTrue(isOfflineBannerVisible(app));
+                } finally {
+                    app.dispose();
+                }
+            });
+        }
+    }
+
     private static boolean isOfflineBannerVisible(App app) {
         try {
             Method m = App.class.getDeclaredMethod("isOfflineBannerVisibleForTest");
@@ -155,7 +254,17 @@ class OfflineResilienceTest {
             status = 204;
             resp = "";
         } else if (path.equals("/rest/v1/app_preferences")) {
-            resp = "[{\"id\":1,\"user_id\":\"u1\",\"currency\":\"PHP\",\"theme\":\"LIGHT\",\"reminder_lead_days\":7,\"show_overdue_reminders\":true}]";
+            if ("POST".equalsIgnoreCase(ex.getRequestMethod())) {
+                preferencesPostCount.incrementAndGet();
+                String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+                if (body.contains("\"DARK\"")) {
+                    serverTheme = "DARK";
+                } else if (body.contains("\"LIGHT\"")) {
+                    serverTheme = "LIGHT";
+                }
+            }
+            resp = "[{\"id\":1,\"user_id\":\"u1\",\"currency\":\"PHP\",\"theme\":\"" + serverTheme
+                    + "\",\"reminder_lead_days\":7,\"show_overdue_reminders\":true}]";
         } else if (path.equals("/rest/v1/subscriptions")) {
             subscriptionGetCount.incrementAndGet();
             resp = "[{\"id\":1,\"name\":\"Netflix\",\"category\":\"Entertainment\",\"icon_key\":\"television\","

@@ -32,7 +32,11 @@ public class SettingsScreen extends JPanel {
         appearance.setSelectedIndex(Theme.isDark() ? 1 : 0);
         appearance.addActionListener(e -> {
             boolean dark = appearance.getSelectedIndex() == 1;
-            if (dark != Theme.isDark()) SwingUtilities.invokeLater(() -> App.get().setDarkMode(dark));
+            if (dark != Theme.isDark()) {
+                SwingUtilities.invokeLater(() -> {
+                    if (App.get() != null) App.get().setDarkMode(dark);
+                });
+            }
         });
         overdue.onChange(() -> { toggleLabel.setText(overdue.isOn() ? "Enabled" : "Disabled"); dirty(); });
         remind.addActionListener(e -> dirty());
