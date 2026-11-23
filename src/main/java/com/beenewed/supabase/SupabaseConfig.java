@@ -1,18 +1,24 @@
 package com.beenewed.supabase;
 
 import java.io.IOException;
+import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.CodeSource;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Loads Supabase project credentials from environment variables first, falling back
- * to a local {@code .env} file in the working directory when an environment variable
- * is missing or blank.
+ * to a {@code .env} file searched in order: current working directory, the directory
+ * containing the running JAR/classes (and its parent), and {@code ~/.beenewed/.env}.
+ * This ensures standalone packaged JARs work regardless of launch working directory.
  */
 public final class SupabaseConfig {
     public static final String ENV_URL = "SUPABASE_URL";
@@ -46,19 +52,65 @@ public final class SupabaseConfig {
     }
 
     public static SupabaseConfig load() {
-        String url = normalize(System.getenv(ENV_URL));
-        String anonKey = normalize(System.getenv(ENV_ANON_KEY));
+        return load(System.getenv(), defaultDotEnvCandidates());
+    }
 
-        if (url == null || anonKey == null) {
-            Map<String, String> dotEnv = loadDotEnv(Path.of(DOTENV_FILE));
-            if (url == null) {
-                url = normalize(dotEnv.get(ENV_URL));
-            }
-            if (anonKey == null) {
-                anonKey = normalize(dotEnv.get(ENV_ANON_KEY));
+    /** Testable entry point resolving credentials from {@code env} then {@code dotEnvCandidates} in order. */
+    public static SupabaseConfig load(Map<String, String> env, List<Path> dotEnvCandidates) {
+        String url = env == null ? null : normalize(env.get(ENV_URL));
+        String anonKey = env == null ? null : normalize(env.get(ENV_ANON_KEY));
+
+        if ((url == null || anonKey == null) && dotEnvCandidates != null) {
+            for (Path candidate : dotEnvCandidates) {
+                Map<String, String> dotEnv = loadDotEnv(candidate);
+                if (dotEnv.isEmpty()) {
+                    continue;
+                }
+                if (url == null) {
+                    url = normalize(dotEnv.get(ENV_URL));
+                }
+                if (anonKey == null) {
+                    anonKey = normalize(dotEnv.get(ENV_ANON_KEY));
+                }
+                if (url != null && anonKey != null) {
+                    break;
+                }
             }
         }
         return new SupabaseConfig(url, anonKey);
+    }
+
+    static List<Path> defaultDotEnvCandidates() {
+        Set<Path> paths = new LinkedHashSet<>();
+        paths.add(Path.of(DOTENV_FILE).toAbsolutePath().normalize());
+
+        Path codeDir = resolveCodeSourceDirectory();
+        if (codeDir != null) {
+            paths.add(codeDir.resolve(DOTENV_FILE).normalize());
+            Path parent = codeDir.getParent();
+            if (parent != null) {
+                paths.add(parent.resolve(DOTENV_FILE).normalize());
+            }
+        }
+
+        String home = System.getProperty("user.home");
+        if (home != null && !home.isBlank()) {
+            paths.add(Path.of(home, ".beenewed", DOTENV_FILE).toAbsolutePath().normalize());
+        }
+        return new ArrayList<>(paths);
+    }
+
+    private static Path resolveCodeSourceDirectory() {
+        try {
+            CodeSource source = SupabaseConfig.class.getProtectionDomain().getCodeSource();
+            if (source == null || source.getLocation() == null) {
+                return null;
+            }
+            Path loc = Path.of(source.getLocation().toURI()).toAbsolutePath().normalize();
+            return Files.isDirectory(loc) ? loc : loc.getParent();
+        } catch (URISyntaxException | SecurityException | IllegalArgumentException ignored) {
+            return null;
+        }
     }
 
     public String url() {

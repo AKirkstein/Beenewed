@@ -35,7 +35,7 @@ import java.util.concurrent.atomic.AtomicReference;
  *       it) and then revokes it server-side with {@code scope=local} (this device only).</li>
  * </ul>
  */
-public final class SupabaseAuthService {
+public final class SupabaseAuthService implements AutoCloseable {
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(20);
     private static final Duration LOGOUT_TIMEOUT = Duration.ofSeconds(10);
     /** Refresh the access token when it is this close to expiring. */
@@ -339,6 +339,17 @@ public final class SupabaseAuthService {
         } catch (RuntimeException error) {
             return CompletableFuture.completedFuture(null);
         }
+    }
+
+    /** Cancels any scheduled token refresh and terminates the background scheduler cleanly. */
+    @Override
+    public void close() {
+        cancelScheduledRefresh();
+        refreshScheduler.shutdownNow();
+    }
+
+    public boolean isClosed() {
+        return refreshScheduler.isShutdown();
     }
 
     // ---------------------------------------------------------------------

@@ -45,17 +45,13 @@ import java.util.concurrent.Executors;
  * All requests authenticate with {@code apikey} and the active user's Bearer JWT so
  * PostgreSQL Row Level Security scopes every operation to {@code auth.uid() = user_id}.
  */
-public final class SupabaseRestClient {
+public final class SupabaseRestClient implements AutoCloseable {
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(20);
-    private static final ExecutorService FETCH_POOL = Executors.newFixedThreadPool(7, runnable -> {
-        Thread thread = new Thread(runnable, "beenewed-supabase-fetch");
-        thread.setDaemon(true);
-        return thread;
-    });
 
     private final SupabaseConfig config;
     private final SupabaseAuthService authService;
     private final HttpClient http;
+    private final ExecutorService fetchPool;
     private final Gson gson = new Gson();
 
     public record UserDataSnapshot(
@@ -82,6 +78,37 @@ public final class SupabaseRestClient {
         this.config = Objects.requireNonNull(config, "config must not be null");
         this.authService = Objects.requireNonNull(authService, "authService must not be null");
         this.http = Objects.requireNonNull(http, "http must not be null");
+        this.fetchPool = Executors.newFixedThreadPool(7, runnable -> {
+            Thread thread = new Thread(runnable, "beenewed-supabase-fetch");
+            thread.setDaemon(true);
+            return thread;
+        });
+    }
+
+    /** Shuts down the parallel fetch executor cleanly when the application exits. */
+    @Override
+    public void close() {
+        fetchPool.shutdownNow();
+    }
+
+    public boolean isClosed() {
+        return fetchPool.isShutdown();
+    }
+
+    /** True when the failure reflects a network/connectivity outage rather than an auth or validation error. */
+    public static boolean isConnectivityFailure(Throwable error) {
+        Throwable cursor = error;
+        while (cursor != null) {
+            if (cursor instanceof IOException) {
+                return true;
+            }
+            String msg = cursor.getMessage();
+            if (msg != null && (msg.contains("Could not reach Supabase") || msg.contains("could not reach Supabase"))) {
+                return true;
+            }
+            cursor = cursor.getCause();
+        }
+        return false;
     }
 
     /**
@@ -90,19 +117,19 @@ public final class SupabaseRestClient {
      */
     public UserDataSnapshot fetchAllUserData() {
         CompletableFuture<List<Subscription>> subsFuture =
-                CompletableFuture.supplyAsync(this::findAllSubscriptions, FETCH_POOL);
+                CompletableFuture.supplyAsync(this::findAllSubscriptions, fetchPool);
         CompletableFuture<List<Payment>> paysFuture =
-                CompletableFuture.supplyAsync(this::findAllPayments, FETCH_POOL);
+                CompletableFuture.supplyAsync(this::findAllPayments, fetchPool);
         CompletableFuture<List<Member>> membersFuture =
-                CompletableFuture.supplyAsync(this::findAllMembers, FETCH_POOL);
+                CompletableFuture.supplyAsync(this::findAllMembers, fetchPool);
         CompletableFuture<List<Contribution>> contribsFuture =
-                CompletableFuture.supplyAsync(this::findAllContributions, FETCH_POOL);
+                CompletableFuture.supplyAsync(this::findAllContributions, fetchPool);
         CompletableFuture<List<UsageLog>> usagesFuture =
-                CompletableFuture.supplyAsync(this::findAllUsageLogs, FETCH_POOL);
+                CompletableFuture.supplyAsync(this::findAllUsageLogs, fetchPool);
         CompletableFuture<List<PriceHistory>> pricesFuture =
-                CompletableFuture.supplyAsync(this::findAllPriceHistory, FETCH_POOL);
+                CompletableFuture.supplyAsync(this::findAllPriceHistory, fetchPool);
         CompletableFuture<AppPreferences> prefsFuture =
-                CompletableFuture.supplyAsync(this::getPreferences, FETCH_POOL);
+                CompletableFuture.supplyAsync(this::getPreferences, fetchPool);
 
         try {
             CompletableFuture.allOf(

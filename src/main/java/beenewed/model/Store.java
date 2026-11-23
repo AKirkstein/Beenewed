@@ -6,11 +6,14 @@ import com.beenewed.backend.exception.NotFoundException;
 import com.beenewed.backend.exception.ValidationException;
 import com.beenewed.backend.services.DashboardService;
 import com.beenewed.backend.services.ReportService;
+import com.beenewed.supabase.LocalSnapshotCache;
 import com.beenewed.supabase.SupabaseException;
 import com.beenewed.supabase.SupabaseRestClient;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.Year;
 import java.time.YearMonth;
@@ -24,7 +27,10 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * UI-facing model adapter with an in-memory cache backed by Supabase PostgREST.
@@ -34,11 +40,41 @@ import java.util.Set;
  */
 public final class Store {
     private static final int RECENT_PAYMENT_LIMIT = 5;
+    private static final Duration DEFAULT_REFRESH_DEBOUNCE = Duration.ofSeconds(5);
     private static Store instance;
 
     public static synchronized Store initialize(SupabaseRestClient supabase) {
-        instance = new Store(supabase);
+        instance = new Store(supabase, null, null, null, null);
         return instance;
+    }
+
+    /**
+     * Initializes the store with persistent SQLite cache support.
+     * On successful sync, persists the latest snapshot locally; if Supabase is unreachable
+     * and a local snapshot exists for {@code userId}/{@code email}, boots cleanly into
+     * offline read-only mode instead of failing startup.
+     */
+    public static synchronized Store initialize(
+            SupabaseRestClient supabase,
+            LocalSnapshotCache localCache,
+            String userId,
+            String email) {
+        instance = new Store(supabase, localCache, userId, email, null);
+        return instance;
+    }
+
+    /** Boots directly into offline read-only mode from a persisted local SQLite snapshot (0 network calls). */
+    public static synchronized Store initializeOffline(
+            SupabaseRestClient supabase,
+            LocalSnapshotCache localCache,
+            LocalSnapshotCache.CachedSnapshot cachedSnapshot) {
+        Objects.requireNonNull(cachedSnapshot, "cachedSnapshot must not be null");
+        instance = new Store(supabase, localCache, cachedSnapshot.userId(), cachedSnapshot.email(), cachedSnapshot);
+        return instance;
+    }
+
+    public static synchronized boolean isInitialized() {
+        return instance != null;
     }
 
     public static synchronized void reset() {
@@ -82,29 +118,168 @@ public final class Store {
     public record ReminderKey(int subscriptionId, LocalDate dueDate, ReminderKind kind) {}
 
     private final Object cacheLock = new Object();
+    private final Object refreshLock = new Object();
     private final SupabaseRestClient supabase;
-    private final List<Runnable> listeners = new ArrayList<>();
+    private final LocalSnapshotCache localCache;
+    private final String cacheUserId;
+    private final String cacheUserEmail;
+    private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
     private final Set<ReminderKey> viewedReminders = new HashSet<>();
 
-    private Store(SupabaseRestClient supabase) {
+    private volatile boolean offline;
+    private volatile String offlineReason;
+    private volatile Instant lastSyncedAt;
+    private volatile Instant lastFetchedAt;
+    private volatile Duration refreshDebounce = DEFAULT_REFRESH_DEBOUNCE;
+    private CompletableFuture<Boolean> inFlightRefresh;
+
+    private Store(
+            SupabaseRestClient supabase,
+            LocalSnapshotCache localCache,
+            String cacheUserId,
+            String cacheUserEmail,
+            LocalSnapshotCache.CachedSnapshot offlineBootSnapshot) {
         this.supabase = Objects.requireNonNull(supabase, "supabase must not be null");
-        reload();
+        this.localCache = localCache;
+        this.cacheUserId = cacheUserId;
+        this.cacheUserEmail = cacheUserEmail;
+
+        if (offlineBootSnapshot != null) {
+            applySnapshot(offlineBootSnapshot.snapshot());
+            this.offline = true;
+            this.offlineReason = "Opened in offline read-only mode.";
+            this.lastSyncedAt = offlineBootSnapshot.savedAt();
+            return;
+        }
+
+        try {
+            reload();
+        } catch (SupabaseException error) {
+            if (SupabaseRestClient.isConnectivityFailure(error) && localCache != null) {
+                Optional<LocalSnapshotCache.CachedSnapshot> fallback = findFallbackSnapshot(cacheUserId, cacheUserEmail);
+                if (fallback.isPresent()) {
+                    applySnapshot(fallback.get().snapshot());
+                    this.offline = true;
+                    this.offlineReason = error.getMessage();
+                    this.lastSyncedAt = fallback.get().savedAt();
+                    return;
+                }
+            }
+            throw error;
+        }
+    }
+
+    private Optional<LocalSnapshotCache.CachedSnapshot> findFallbackSnapshot(String userId, String email) {
+        if (localCache == null) return Optional.empty();
+        Optional<LocalSnapshotCache.CachedSnapshot> byId = localCache.loadByUserId(userId);
+        if (byId.isPresent()) return byId;
+        Optional<LocalSnapshotCache.CachedSnapshot> byEmail = localCache.loadByEmail(email);
+        if (byEmail.isPresent()) return byEmail;
+        return localCache.loadLatest();
     }
 
     public void onChange(Runnable listener) {
         listeners.add(Objects.requireNonNull(listener, "listener must not be null"));
     }
 
+    /** Detaches a UI change listener cleanly (e.g. when a frame is disposed). */
+    public void offChange(Runnable listener) {
+        if (listener != null) {
+            listeners.remove(listener);
+        }
+    }
+
+    public int listenerCount() {
+        return listeners.size();
+    }
+
     public void changed() {
         listeners.forEach(Runnable::run);
     }
 
+    public boolean isOffline() {
+        return offline;
+    }
+
+    public String getOfflineReason() {
+        return offlineReason;
+    }
+
+    public Instant getLastSyncedAt() {
+        return lastSyncedAt;
+    }
+
+    public String getCachedUserEmail() {
+        return cacheUserEmail;
+    }
+
+    public void setRefreshDebounce(Duration debounce) {
+        this.refreshDebounce = debounce == null || debounce.isNegative() ? Duration.ZERO : debounce;
+    }
+
+    /**
+     * Refreshes from Supabase only if the cached data is older than the debounce window,
+     * coalescing any concurrent calls to avoid duplicate API requests during navigation.
+     *
+     * @return {@code true} if online/up-to-date, {@code false} if operating in offline fallback mode
+     */
+    public boolean refreshIfStale() {
+        Instant fetched = lastFetchedAt;
+        if (!offline && fetched != null && Duration.between(fetched, Instant.now()).compareTo(refreshDebounce) < 0) {
+            return true;
+        }
+        return forceRefresh();
+    }
+
+    /**
+     * Re-fetches all user tables from Supabase (coalescing concurrent calls).
+     * If Supabase is unreachable, retains the current in-memory/local cache, switches to
+     * offline read-only mode, and returns {@code false}.
+     */
+    public boolean forceRefresh() {
+        CompletableFuture<Boolean> active;
+        boolean owner = false;
+        synchronized (refreshLock) {
+            if (inFlightRefresh != null && !inFlightRefresh.isDone()) {
+                active = inFlightRefresh;
+            } else {
+                active = new CompletableFuture<>();
+                inFlightRefresh = active;
+                owner = true;
+            }
+        }
+        if (!owner) {
+            return active.join();
+        }
+        try {
+            reload();
+            active.complete(true);
+            return true;
+        } catch (SupabaseException error) {
+            if (SupabaseRestClient.isConnectivityFailure(error)) {
+                this.offline = true;
+                this.offlineReason = error.getMessage();
+                active.complete(false);
+                return false;
+            }
+            BackendAccessException wrapped = new BackendAccessException(error);
+            active.completeExceptionally(wrapped);
+            throw wrapped;
+        } catch (RuntimeException error) {
+            active.completeExceptionally(error);
+            throw error;
+        } finally {
+            synchronized (refreshLock) {
+                if (inFlightRefresh == active) {
+                    inFlightRefresh = null;
+                }
+            }
+        }
+    }
+
     /** Re-fetches all user tables from Supabase in parallel and updates the in-memory cache. */
     public void refresh() {
-        withBackend(() -> {
-            reload();
-            return null;
-        });
+        forceRefresh();
     }
 
     // =====================================================================
@@ -1194,7 +1369,18 @@ public final class Store {
     private void reload() {
         // Run all 7 table GET requests in parallel outside the cache lock
         SupabaseRestClient.UserDataSnapshot snapshot = supabase.fetchAllUserData();
+        applySnapshot(snapshot);
+        Instant now = Instant.now();
+        this.offline = false;
+        this.offlineReason = null;
+        this.lastSyncedAt = now;
+        this.lastFetchedAt = now;
+        if (localCache != null && cacheUserId != null && !cacheUserId.isBlank()) {
+            localCache.save(cacheUserId, cacheUserEmail, snapshot);
+        }
+    }
 
+    private void applySnapshot(SupabaseRestClient.UserDataSnapshot snapshot) {
         synchronized (cacheLock) {
             Map<Integer, Subscription> oldSubscriptions = indexSubscriptions();
             List<Subscription> loadedSubscriptions = mapSubscriptions(snapshot.subscriptions(), oldSubscriptions);
@@ -1236,6 +1422,41 @@ public final class Store {
             remindDays = prefs.reminderLeadDays();
             showOverdue = prefs.showOverdueReminders();
         }
+    }
+
+    private void persistCurrentStateToCache() {
+        if (localCache == null || cacheUserId == null || cacheUserId.isBlank()) {
+            return;
+        }
+        SupabaseRestClient.UserDataSnapshot snapshot;
+        synchronized (cacheLock) {
+            List<com.beenewed.backend.model.Subscription> subRows = subscriptions.stream()
+                    .map(s -> toBackendSubscription(s, s.id)).toList();
+            List<com.beenewed.backend.model.Payment> payRows = payments.stream()
+                    .map(p -> toBackendPayment(p, p.id)).toList();
+            List<com.beenewed.backend.model.Member> memRows = members.stream()
+                    .map(m -> toBackendMember(m, m.id)).toList();
+            List<com.beenewed.backend.model.Contribution> contribRows = contributions.stream()
+                    .map(c -> toBackendContribution(c, c.id)).toList();
+            List<com.beenewed.backend.model.UsageLog> usageRows = usages.stream()
+                    .map(u -> toBackendUsage(u, u.id)).toList();
+            List<com.beenewed.backend.model.PriceHistory> priceRows = priceChanges.stream()
+                    .map(pc -> new com.beenewed.backend.model.PriceHistory(
+                            (long) pc.id,
+                            (long) pc.sub.id,
+                            money(pc.oldPrice),
+                            money(pc.newPrice),
+                            pc.date,
+                            pc.notes,
+                            null))
+                    .toList();
+            com.beenewed.backend.model.AppPreferences prefs = new com.beenewed.backend.model.AppPreferences(
+                    1L, currency, theme, remindDays, showOverdue);
+            snapshot = new SupabaseRestClient.UserDataSnapshot(
+                    subRows, payRows, memRows, contribRows, usageRows, priceRows, prefs);
+        }
+        localCache.save(cacheUserId, cacheUserEmail, snapshot);
+        this.lastSyncedAt = Instant.now();
     }
 
     private ReportService.EstimatedRecurringReport computeEstimatedRecurringLocked() {
@@ -1698,9 +1919,18 @@ public final class Store {
     }
 
     private <T> T withBackend(BackendOperation<T> operation) {
+        if (offline) {
+            throw new ValidationException("You are currently offline (read-only mode). Reconnect to save changes.");
+        }
         try {
-            return operation.run();
+            T result = operation.run();
+            persistCurrentStateToCache();
+            return result;
         } catch (SupabaseException exception) {
+            if (SupabaseRestClient.isConnectivityFailure(exception)) {
+                this.offline = true;
+                this.offlineReason = exception.getMessage();
+            }
             throw new BackendAccessException(exception);
         }
     }

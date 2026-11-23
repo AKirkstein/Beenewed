@@ -5,6 +5,7 @@ import beenewed.model.Models.*;
 import beenewed.model.Store;
 import beenewed.screens.*;
 import beenewed.ui.*;
+import com.beenewed.supabase.LocalSnapshotCache;
 import com.beenewed.supabase.SupabaseAuthService;
 import com.beenewed.supabase.SupabaseConfig;
 import com.beenewed.supabase.SupabaseException;
@@ -16,7 +17,11 @@ import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
 import java.awt.event.*;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -42,13 +47,27 @@ public class App extends JFrame {
     private SettingsScreen settings;
     private UI.Btn bellButton;
     private JLabel bellBadge;
+    private JPanel offlineBanner;
+    private JLabel offlineBannerLabel;
+    private UI.Btn reconnectBtn;
+    private boolean reconnecting;
     private final SupabaseAuthService authService;
     private final SupabaseRestClient restClient;
+    private final LocalSnapshotCache localCache;
+    private final Runnable storeListener = this::refreshCurrent;
+
+    private static final DateTimeFormatter SYNC_TIME_FMT =
+            DateTimeFormatter.ofPattern("MMM d, h:mm a", Locale.ENGLISH);
 
     public App(SupabaseAuthService authService, SupabaseRestClient restClient) {
+        this(authService, restClient, null);
+    }
+
+    public App(SupabaseAuthService authService, SupabaseRestClient restClient, LocalSnapshotCache localCache) {
         super("Beenewed \u2014 Subscription Tracker");
         this.authService = authService;
         this.restClient = restClient;
+        this.localCache = localCache;
         instance = this;
         setDefaultCloseOperation(DO_NOTHING_ON_CLOSE);
         addWindowListener(new WindowAdapter() {
@@ -72,13 +91,25 @@ public class App extends JFrame {
         glass.addMouseListener(new MouseAdapter() {});
         setGlassPane(glass);
 
-        Store.get().onChange(this::refreshCurrent);
+        Store.get().onChange(storeListener);
         buildUI();
         show(Screen.DASHBOARD);
     }
 
+    @Override
+    public void dispose() {
+        closeProfileMenu();
+        if (Store.isInitialized()) {
+            Store.get().offChange(storeListener);
+        }
+        super.dispose();
+    }
+
     public String getCurrentUserEmail() {
         String email = authService.getEmail();
+        if ((email == null || email.isBlank()) && Store.isInitialized()) {
+            email = Store.get().getCachedUserEmail();
+        }
         return email == null || email.isBlank() ? "Signed-in account" : email;
     }
 
@@ -95,7 +126,7 @@ public class App extends JFrame {
 
         Theme.apply(false);
         installUIColors();
-        SwingUtilities.invokeLater(() -> launchWithLogin(authService, restClient));
+        SwingUtilities.invokeLater(() -> launchWithLogin(authService, restClient, localCache));
     }
 
     /** Asks for confirmation, then signs out. Used by the profile menu and the Settings screen. */
@@ -150,23 +181,31 @@ public class App extends JFrame {
 
     /** Re-fetches all user data from Supabase in the background, then refreshes the screen. */
     private void refreshDataFromServer() {
+        if (!authService.isAuthenticated()) {
+            logout();
+            return;
+        }
+        reconnecting = true;
+        updateConnectivityBanner();
         setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
-        new SwingWorker<Void, Void>() {
+        new SwingWorker<Boolean, Void>() {
             @Override
-            protected Void doInBackground() {
-                Store.get().refresh();
-                return null;
+            protected Boolean doInBackground() {
+                return Store.get().forceRefresh();
             }
 
             @Override
             protected void done() {
+                reconnecting = false;
                 setCursor(Cursor.getDefaultCursor());
                 try {
                     get();
                     Store.get().changed();
                 } catch (InterruptedException error) {
                     Thread.currentThread().interrupt();
+                    updateConnectivityBanner();
                 } catch (java.util.concurrent.ExecutionException error) {
+                    updateConnectivityBanner();
                     Throwable cause = error.getCause();
                     if (cause instanceof RuntimeException runtime) {
                         Common.showBackendError(App.this, runtime);
@@ -182,6 +221,7 @@ public class App extends JFrame {
 
     /** Builds (or rebuilds) every component with the current Theme colours. */
     private void buildUI() {
+        closeProfileMenu();
         cards = new CardLayout();
         content = new JPanel(cards);
         navItems.clear();
@@ -198,7 +238,16 @@ public class App extends JFrame {
 
         JPanel main = new JPanel(new BorderLayout());
         main.setBackground(Theme.BG);
-        main.add(buildHeader(), BorderLayout.NORTH);
+        JPanel topBars = new JPanel();
+        topBars.setLayout(new BoxLayout(topBars, BoxLayout.Y_AXIS));
+        topBars.setOpaque(false);
+        JComponent headerBar = buildHeader();
+        JComponent bannerBar = buildConnectivityBanner();
+        headerBar.setAlignmentX(0f);
+        bannerBar.setAlignmentX(0f);
+        topBars.add(headerBar);
+        topBars.add(bannerBar);
+        main.add(topBars, BorderLayout.NORTH);
 
         content.setBackground(Theme.BG);
         content.add(dashboard, Screen.DASHBOARD.name());
@@ -210,12 +259,58 @@ public class App extends JFrame {
         main.add(content, BorderLayout.CENTER);
         root.add(main, BorderLayout.CENTER);
         setContentPane(root);
+        updateConnectivityBanner();
 
         // Keyboard shortcut from the design: Ins = New Subscription
         root.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke(KeyEvent.VK_INSERT, 0), "newSub");
         root.getActionMap().put("newSub", new AbstractAction() {
             public void actionPerformed(ActionEvent e) { addSubscription(); }
         });
+    }
+
+    private JComponent buildConnectivityBanner() {
+        offlineBanner = new JPanel(new BorderLayout(12, 0));
+        offlineBanner.setBackground(Theme.AMBER_BG);
+        offlineBanner.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(0, 0, 1, 0, Theme.BORDER),
+                new EmptyBorder(8, 22, 8, 22)));
+        offlineBannerLabel = UI.label("", Theme.SMALL_B, Theme.AMBER);
+        offlineBannerLabel.setIcon(Icons.of(Icons.Type.ALERT, 15, Theme.AMBER));
+        offlineBannerLabel.setIconTextGap(8);
+        reconnectBtn = UI.secondary("Reconnect", Icons.Type.REFRESH).small();
+        reconnectBtn.addActionListener(e -> refreshDataFromServer());
+        offlineBanner.add(offlineBannerLabel, BorderLayout.CENTER);
+        offlineBanner.add(reconnectBtn, BorderLayout.EAST);
+        offlineBanner.setMaximumSize(new Dimension(Integer.MAX_VALUE, 42));
+        offlineBanner.setVisible(false);
+        return offlineBanner;
+    }
+
+    private void updateConnectivityBanner() {
+        if (offlineBanner == null || !Store.isInitialized()) return;
+        Store st = Store.get();
+        boolean show = st.isOffline() || reconnecting;
+        offlineBanner.setVisible(show);
+        if (!show) return;
+
+        if (reconnecting) {
+            offlineBannerLabel.setText("Reconnecting to Supabase\u2026");
+            reconnectBtn.setEnabled(false);
+            reconnectBtn.setText("Reconnecting\u2026");
+        } else {
+            Instant synced = st.getLastSyncedAt();
+            String syncSuffix = synced == null
+                    ? ""
+                    : " \u2022 Last synced " + SYNC_TIME_FMT.format(synced.atZone(ZoneId.systemDefault()));
+            offlineBannerLabel.setText("Offline mode (read-only) \u2014 Showing cached data" + syncSuffix);
+            reconnectBtn.setEnabled(true);
+            reconnectBtn.setText(authService.isAuthenticated() ? "Reconnect" : "Sign In Online");
+        }
+    }
+
+    /** Package-private accessor used by UI tests to inspect offline banner state. */
+    boolean isOfflineBannerVisibleForTest() {
+        return offlineBanner != null && offlineBanner.isVisible();
     }
 
     /** Top header bar: theme switch, notifications bell and profile icon on the right. */
@@ -481,6 +576,7 @@ public class App extends JFrame {
     private void refreshCurrent() {
         try {
             updateBell();
+            updateConnectivityBanner();
             switch (current) {
                 case DASHBOARD -> dashboard.refresh();
                 case SUBSCRIPTIONS -> subscriptions.refresh();
@@ -498,6 +594,8 @@ public class App extends JFrame {
         closeProfileMenu();
         // Wait briefly so the server-side revoke is actually sent before the JVM exits.
         authService.signOutAndWait(java.time.Duration.ofSeconds(3));
+        authService.close();
+        restClient.close();
         Store.reset();
         dispose();
         System.exit(0);
@@ -538,20 +636,33 @@ public class App extends JFrame {
 
             SupabaseAuthService authService = new SupabaseAuthService(config);
             SupabaseRestClient restClient = new SupabaseRestClient(config, authService);
-            launchWithLogin(authService, restClient);
+            LocalSnapshotCache localCache = LocalSnapshotCache.defaultCache();
+            launchWithLogin(authService, restClient, localCache);
         });
     }
 
-    private static void launchWithLogin(SupabaseAuthService authService, SupabaseRestClient restClient) {
-        LoginDialog loginDialog = new LoginDialog(null, authService, () -> Store.initialize(restClient));
-        if (!loginDialog.showDialog() || !authService.isAuthenticated()) {
+    private static void launchWithLogin(
+            SupabaseAuthService authService,
+            SupabaseRestClient restClient,
+            LocalSnapshotCache localCache) {
+        LoginDialog loginDialog = new LoginDialog(
+                null,
+                authService,
+                () -> Store.initialize(restClient, localCache, authService.getUserId(), authService.getEmail()),
+                localCache,
+                cached -> Store.initializeOffline(restClient, localCache, cached));
+        boolean loggedIn = loginDialog.showDialog();
+        boolean offlineBoot = loginDialog.isOfflineOpened();
+        if ((!loggedIn || !authService.isAuthenticated()) && !offlineBoot) {
+            authService.close();
+            restClient.close();
             System.exit(0);
             return;
         }
 
         Theme.apply(Store.get().getTheme() == com.beenewed.backend.model.Theme.DARK);
         installUIColors();
-        new App(authService, restClient).setVisible(true);
+        new App(authService, restClient, localCache).setVisible(true);
     }
 
     /** Uses FlatLaf if its jar is on the classpath (the design is a FlatLaf replica); otherwise the cross-platform look. */

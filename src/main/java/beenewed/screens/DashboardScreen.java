@@ -33,11 +33,10 @@ public class DashboardScreen extends JPanel {
             refreshBtn.setText("Refreshing...");
             Window win = SwingUtilities.getWindowAncestor(this);
             if (win != null) win.setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
-            new SwingWorker<Void, Void>() {
+            new SwingWorker<Boolean, Void>() {
                 @Override
-                protected Void doInBackground() {
-                    Store.get().refresh();
-                    return null;
+                protected Boolean doInBackground() {
+                    return Store.get().forceRefresh();
                 }
 
                 @Override

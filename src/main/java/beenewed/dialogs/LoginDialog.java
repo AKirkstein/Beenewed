@@ -3,6 +3,7 @@ package beenewed.dialogs;
 import beenewed.ui.Icons;
 import beenewed.ui.Theme;
 import beenewed.ui.UI;
+import com.beenewed.supabase.LocalSnapshotCache;
 import com.beenewed.supabase.PasswordPolicy;
 import com.beenewed.supabase.SupabaseAuthException;
 import com.beenewed.supabase.SupabaseAuthService;
@@ -17,7 +18,9 @@ import java.util.Arrays;
 import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ExecutionException;
+import java.util.function.Consumer;
 
 /**
  * Startup authentication dialog supporting Supabase Sign In, Create Account, and
@@ -30,10 +33,13 @@ public final class LoginDialog extends JDialog {
 
     private final SupabaseAuthService authService;
     private final Runnable onAuthenticatedLoad;
+    private final LocalSnapshotCache localCache;
+    private final Consumer<LocalSnapshotCache.CachedSnapshot> onOfflineOpen;
 
     private Mode mode = Mode.SIGN_IN;
     private String pendingVerifyEmail;
     private boolean authenticated = false;
+    private boolean offlineOpened = false;
     private boolean busy = false;
 
     private final UI.Btn signInTab = UI.soft("Sign In", null);
@@ -74,18 +80,31 @@ public final class LoginDialog extends JDialog {
     private final JPanel otpSection;
 
     private final UI.Btn submitBtn = UI.primary("Sign In", null);
+    private final UI.Btn offlineBtn = UI.secondary("Continue Offline (Read-Only)", Icons.Type.CLOCK);
+    private final JPanel offlineWrap;
     private final UI.Btn resendBtn = UI.secondary("Resend Code", null);
     private final JPanel resendWrap;
     private final UI.Btn switchModeLink = UI.link("Don't have an account? Create one");
 
     public LoginDialog(Frame owner, SupabaseAuthService authService) {
-        this(owner, authService, null);
+        this(owner, authService, null, null, null);
     }
 
     public LoginDialog(Frame owner, SupabaseAuthService authService, Runnable onAuthenticatedLoad) {
+        this(owner, authService, onAuthenticatedLoad, null, null);
+    }
+
+    public LoginDialog(
+            Frame owner,
+            SupabaseAuthService authService,
+            Runnable onAuthenticatedLoad,
+            LocalSnapshotCache localCache,
+            Consumer<LocalSnapshotCache.CachedSnapshot> onOfflineOpen) {
         super(owner, "Beenewed \u2014 Sign In", true);
         this.authService = authService;
         this.onAuthenticatedLoad = onAuthenticatedLoad;
+        this.localCache = localCache;
+        this.onOfflineOpen = onOfflineOpen;
 
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setResizable(false);
@@ -201,6 +220,13 @@ public final class LoginDialog extends JDialog {
         JPanel submitWrap = wrapSection(submitBtn, 10);
         submitWrap.setBorder(new EmptyBorder(6, 0, 10, 0));
 
+        // Offline read-only fallback button (visible on Sign In when a local SQLite snapshot exists)
+        offlineBtn.setMaximumSize(new Dimension(Integer.MAX_VALUE, 38));
+        offlineBtn.setPreferredSize(new Dimension(DIALOG_WIDTH - 100, 38));
+        offlineBtn.addActionListener(e -> openOfflineCache());
+        offlineWrap = wrapSection(offlineBtn, 10);
+        offlineWrap.setVisible(hasLocalOfflineCache());
+
         // Resend code button (Verify Email mode only)
         resendBtn.setMaximumSize(new Dimension(Integer.MAX_VALUE, 38));
         resendBtn.setPreferredSize(new Dimension(DIALOG_WIDTH - 100, 38));
@@ -237,6 +263,7 @@ public final class LoginDialog extends JDialog {
                 showPasswordWrap,
                 otpSection,
                 submitWrap,
+                offlineWrap,
                 resendWrap,
                 linkWrap
         }) {
@@ -269,6 +296,32 @@ public final class LoginDialog extends JDialog {
         SwingUtilities.invokeLater(emailField::requestFocusInWindow);
         setVisible(true);
         return authenticated;
+    }
+
+    /** Returns {@code true} if the user chose to open Beenewed from local offline cache. */
+    public boolean isOfflineOpened() {
+        return offlineOpened;
+    }
+
+    private boolean hasLocalOfflineCache() {
+        return localCache != null && onOfflineOpen != null && localCache.hasAnySnapshot();
+    }
+
+    private void openOfflineCache() {
+        if (busy || !hasLocalOfflineCache()) {
+            return;
+        }
+        String typedEmail = emailField.getText().trim();
+        Optional<LocalSnapshotCache.CachedSnapshot> snap = typedEmail.isEmpty()
+                ? localCache.loadLatest()
+                : localCache.loadByEmail(typedEmail).or(localCache::loadLatest);
+        if (snap.isEmpty()) {
+            showBanner("No local cached data is available yet. Sign in online once to enable offline mode.", true);
+            return;
+        }
+        onOfflineOpen.accept(snap.get());
+        offlineOpened = true;
+        dispose();
     }
 
     private void switchMode(Mode target) {
@@ -356,6 +409,7 @@ public final class LoginDialog extends JDialog {
         updatePasswordFeedback();
 
         submitBtn.setText(defaultSubmitLabel());
+        offlineWrap.setVisible(isSignIn && hasLocalOfflineCache());
         resendBtn.setText("Resend Code");
         resendWrap.setVisible(isVerify);
 
@@ -582,6 +636,7 @@ public final class LoginDialog extends JDialog {
         switchModeLink.setEnabled(!isBusy);
         submitBtn.setEnabled(!isBusy);
         submitBtn.setText(submitLabel);
+        offlineBtn.setEnabled(!isBusy);
         resendBtn.setEnabled(!isBusy);
         resendBtn.setText(resendLabel);
     }
