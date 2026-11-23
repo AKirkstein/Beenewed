@@ -10,6 +10,8 @@ import com.beenewed.backend.exception.ValidationException;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
+import javax.swing.event.PopupMenuEvent;
+import javax.swing.event.PopupMenuListener;
 import java.awt.*;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -26,13 +28,18 @@ public class PaymentDialog extends BaseDialog {
     private final UI.Combo<Subscription> sub;
     private final DateField date = new DateField("Select payment date");
     private final UI.PrefixField amount = new UI.PrefixField("\u20B1", "0.00");
-    private final UI.TextField period = new UI.TextField("e.g. November 2026");
+    private final UI.Combo<String> period = new UI.Combo<>();
     private final UI.Combo<String> method = new UI.Combo<>(Models.PAYMENT_METHODS);
     private final UI.Combo<ScopeOption> scopeCombo = new UI.Combo<>();
     private final UI.Combo<SplitAllocator.Participant> payerCombo = new UI.Combo<>();
     private final UI.TextArea notes = new UI.TextArea("Add an optional note about this payment (e.g. Paid via GCash, receipt ref)...", 3);
     private final Field fSub, fDate, fAmount, fPeriod;
-    private final JPanel sharedRowWrap = UI.clear(new BorderLayout());
+    private final JPanel sharedRowWrap = new JPanel(new BorderLayout()) {
+        { setOpaque(false); }
+        @Override public Dimension getMaximumSize() {
+            return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+        }
+    };
     private boolean updatingControls;
 
     private record ScopeOption(String label, BigDecimal amount, boolean splitShareOnly) {
@@ -112,10 +119,62 @@ public class PaymentDialog extends BaseDialog {
         fAmount = new Field("Amount Paid", true, null, amount, "Must match the subscription price or designated split share.");
         place(pair(fDate, fAmount)); gap(10);
         period.setEditable(false);
-        period.setFocusable(false);
-        period.setForeground(Theme.TEXT_2);
-        period.setCursor(Cursor.getDefaultCursor());
-        fPeriod = new Field("Renewal Period", true, null, period, "Auto-computed from the subscription's renewal date (read-only).");
+        period.setRenderer(new DefaultListCellRenderer() {
+            @Override public Component getListCellRendererComponent(JList<?> list, Object v, int idx, boolean sel, boolean f) {
+                JLabel l = (JLabel) super.getListCellRendererComponent(list, v, idx, sel, f);
+                l.setFont(Theme.BODY);
+                String text = v == null ? "" : v.toString();
+                if (idx == -1) {
+                    l.setBorder(new EmptyBorder(4, 6, 4, 2));
+                    l.setOpaque(false);
+                    l.setForeground(period.isEnabled() ? Theme.TEXT : Theme.MUTED);
+                    l.setText(text);
+                } else if (readOnly || idx == 0) {
+                    l.setBorder(new EmptyBorder(6, 10, 6, 12));
+                    l.setBackground(sel ? Theme.PRIMARY_LIGHT : Theme.ELEVATED);
+                    l.setForeground(sel ? Theme.ACCENT : Theme.TEXT);
+                    if (!readOnly && !text.isEmpty()) {
+                        l.setText("<html>" + escapeHtml(text)
+                                + " &nbsp;<span style='color:" + Theme.hex(Theme.ACCENT) + "'>(Next due)</span></html>");
+                    } else {
+                        l.setText(text);
+                    }
+                } else {
+                    l.setBorder(new EmptyBorder(6, 10, 6, 12));
+                    l.setBackground(sel ? Theme.SUBTLE : Theme.ELEVATED);
+                    l.setForeground(Theme.MUTED);
+                    l.setText("<html>" + escapeHtml(text)
+                            + " &nbsp;<span style='color:" + Theme.hex(Theme.MUTED) + "'>(Upcoming)</span></html>");
+                }
+                return l;
+            }
+        });
+        period.addPopupMenuListener(new PopupMenuListener() {
+            @Override public void popupMenuWillBecomeVisible(PopupMenuEvent e) {
+                Object child = period.getUI().getAccessibleChild(period, 0);
+                if (child instanceof JPopupMenu popup && popup.getComponentCount() > 0
+                        && popup.getComponent(0) instanceof JScrollPane sp
+                        && sp.getViewport().getView() instanceof JList<?> list) {
+                    int maxItemWidth = period.getWidth();
+                    ListCellRenderer<? super String> r = period.getRenderer();
+                    for (int i = 0; i < period.getItemCount(); i++) {
+                        @SuppressWarnings("unchecked")
+                        Component c = r.getListCellRendererComponent(
+                                (JList<String>) list, period.getItemAt(i), i, false, false);
+                        maxItemWidth = Math.max(maxItemWidth, c.getPreferredSize().width + 24);
+                    }
+                    Dimension pref = sp.getPreferredSize();
+                    sp.setPreferredSize(new Dimension(maxItemWidth, pref.height));
+                    sp.setMaximumSize(new Dimension(maxItemWidth, pref.height));
+                }
+            }
+            @Override public void popupMenuWillBecomeInvisible(PopupMenuEvent e) { }
+            @Override public void popupMenuCanceled(PopupMenuEvent e) { }
+        });
+        fPeriod = new Field("Renewal Period", true, null, period,
+                readOnly
+                        ? "Recorded renewal period for this receipt (read-only)."
+                        : "Sequential unpaid periods (pay ahead one cycle at a time).");
         Field fMethod = new Field("Payment Method", false, "(Optional)", method, " ");
         place(pair(fPeriod, fMethod)); gap(10);
         place(new Field("Notes / Reference", false, "(Optional)", notes, null)); gap(12);
@@ -125,12 +184,17 @@ public class PaymentDialog extends BaseDialog {
                     + "'>Read-Only Ledger:</b> Recorded payment entries are immutable to preserve financial history and audit integrity.", true));
         } else {
             place(infoNote("<b style='color:" + Theme.hex(Theme.TEXT)
-                    + "'>Ledger &amp; Due Dates:</b> Recording a payment creates an immutable ledger entry, advances the subscription\u2019s next due date by one billing cycle, and clears overdue status once settled.", false));
+                    + "'>Ledger &amp; Due Dates:</b> Recording a payment creates an immutable ledger entry, advances the subscription\u2019s next due date to the cycle after the paid period, and unlocks the next sequential period for paying ahead.", false));
         }
 
         sub.addActionListener(e -> {
             if (!readOnly && !updatingControls) {
                 syncFromSelectedSubscription();
+            }
+        });
+        period.addActionListener(e -> {
+            if (!readOnly && !updatingControls) {
+                validateSelectedPeriodInline();
             }
         });
         scopeCombo.addActionListener(e -> {
@@ -146,7 +210,10 @@ public class PaymentDialog extends BaseDialog {
             populateSharedControls(existing.sub, existing);
             date.setDate(existing.date);
             amount.setText(Theme.num(existing.amount).replace(",", ""));
-            period.setText(existing.period == null ? "" : existing.period);
+            String recordedPeriod = existing.period == null ? "" : existing.period;
+            period.removeAllItems();
+            period.addItem(recordedPeriod);
+            period.setSelectedItem(recordedPeriod);
             method.setSelectedItem(existing.method == null ? "Not specified" : existing.method);
             String clean = SplitAllocator.cleanNotes(existing.notes);
             notes.setText(clean == null ? "" : clean);
@@ -160,7 +227,6 @@ public class PaymentDialog extends BaseDialog {
             period.setEditable(false);
             period.setEnabled(false);
             period.setFocusable(false);
-            period.setDisabledTextColor(Theme.MUTED);
             method.setEnabled(false);
             method.setFocusable(false);
             scopeCombo.setEnabled(false);
@@ -187,28 +253,59 @@ public class PaymentDialog extends BaseDialog {
     private void syncFromSelectedSubscription() {
         Subscription s = sub.selected();
         if (s == null) {
+            updatingControls = true;
+            try {
+                period.removeAllItems();
+            } finally {
+                updatingControls = false;
+            }
             sharedRowWrap.setVisible(false);
             return;
         }
         updatingControls = true;
         try {
             amount.setText(BillingRules.money(s.price).toPlainString());
-            String autoPeriod = BillingRules.defaultPeriodLabel(s.nextRenewal, s.cycle);
-            period.setText(autoPeriod);
+            List<BillingRules.PeriodOption> upcoming = Store.get().upcomingUnpaidPeriods(s);
+            period.removeAllItems();
+            for (BillingRules.PeriodOption opt : upcoming) {
+                period.addItem(opt.label());
+            }
+            if (period.getItemCount() > 0) {
+                period.setSelectedIndex(0);
+                fPeriod.error(null);
+            } else {
+                fPeriod.error("No upcoming unpaid renewal periods available for " + s.name + ".");
+            }
             populateSharedControls(s, null);
             fSub.error(null);
             fAmount.error(null);
-            if (BillingRules.findDuplicatePayment(s, autoPeriod, Store.get().payments).isPresent()) {
-                fPeriod.error("A payment for " + s.name + " in \"" + autoPeriod + "\" already exists.");
-            } else {
-                fPeriod.error(null);
-            }
         } finally {
             updatingControls = false;
         }
         if (isVisible()) {
             refit();
         }
+    }
+
+    private void validateSelectedPeriodInline() {
+        Subscription selectedSub = sub.selected();
+        String chosen = period.selected();
+        if (selectedSub == null || chosen == null) {
+            return;
+        }
+        try {
+            BillingRules.validateSequentialPeriod(selectedSub, chosen, Store.get().payments);
+            fPeriod.error(null);
+        } catch (ValidationException ex) {
+            fPeriod.error(ex.getMessage());
+        }
+        if (isVisible()) {
+            refit();
+        }
+    }
+
+    private static String escapeHtml(String s) {
+        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
     private void populateSharedControls(Subscription s, Payment existing) {
@@ -265,6 +362,7 @@ public class PaymentDialog extends BaseDialog {
             payerCombo.setSelectedIndex(payerIndex);
         }
         sharedRowWrap.setVisible(true);
+        sharedRowWrap.revalidate();
     }
 
     @Override protected Runnable prepareSave() {
@@ -322,16 +420,20 @@ public class PaymentDialog extends BaseDialog {
             fAmount.error(null);
         }
 
-        String per = selectedSub != null
-                ? BillingRules.defaultPeriodLabel(selectedSub.nextRenewal, selectedSub.cycle)
-                : period.getText().trim();
-        period.setText(per);
+        String per = period.selected() == null ? "" : period.selected().trim();
         if (per.isEmpty()) {
             fPeriod.error("Renewal period is required.");
             ok = false;
-        } else if (selectedSub != null && BillingRules.findDuplicatePayment(selectedSub, per, st.payments).isPresent()) {
-            fPeriod.error("A payment for " + selectedSub.name + " in \"" + per + "\" already exists.");
-            ok = false;
+        } else if (selectedSub != null) {
+            try {
+                BillingRules.PeriodOption validated =
+                        BillingRules.validateSequentialPeriod(selectedSub, per, st.payments);
+                per = validated.label();
+                fPeriod.error(null);
+            } catch (ValidationException ex) {
+                fPeriod.error(ex.getMessage());
+                ok = false;
+            }
         } else {
             fPeriod.error(null);
         }

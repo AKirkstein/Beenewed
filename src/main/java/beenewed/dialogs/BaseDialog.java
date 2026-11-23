@@ -49,7 +49,16 @@ public abstract class BaseDialog extends JDialog {
         header.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Theme.BORDER), new EmptyBorder(18, 22, 14, 16)));
         JLabel t = UI.label(title, Theme.H2.deriveFont(18f), Theme.TEXT);
         if (titleIcon != null && !iconTile) { t.setIcon(Icons.of(titleIcon, 18, Theme.ACCENT)); t.setIconTextGap(8); }
-        JComponent titleBlock = subtitle == null ? t : UI.vstack(4, t, UI.label(subtitle, iconTile ? Theme.SMALL : Theme.BODY, Theme.MUTED));
+        JComponent titleBlock;
+        if (subtitle == null) {
+            titleBlock = t;
+        } else {
+            int subW = Math.max(220, width - (iconTile ? 140 : 96));
+            String safeSub = subtitle.startsWith("<html>")
+                    ? subtitle.substring(6).replaceFirst("(?i)</html>$", "")
+                    : subtitle.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+            titleBlock = UI.vstack(4, t, UI.wrap(safeSub, subW, iconTile ? Theme.SMALL : Theme.BODY, Theme.MUTED));
+        }
         if (titleIcon != null && iconTile) {
             UI.RoundPanel tile = new UI.RoundPanel(new GridBagLayout(), 10, Theme.PRIMARY_LIGHT, null);
             tile.add(new JLabel(Icons.of(titleIcon, 18, Theme.ACCENT)));
@@ -292,6 +301,7 @@ public abstract class BaseDialog extends JDialog {
             helper.setText(helperText == null ? "" : helperText);
             errIcon.setVerticalAlignment(SwingConstants.TOP);
             errIcon.setVisible(false);
+            helperRow.setBorder(new EmptyBorder(0, 0, 2, 0));
             helperRow.add(errIcon, BorderLayout.WEST);
             helperRow.add(helper, BorderLayout.CENTER);
             for (JComponent c : new JComponent[]{labelRow, input, helperRow}) c.setAlignmentX(0f);
@@ -320,11 +330,16 @@ public abstract class BaseDialog extends JDialog {
         @Override public Dimension getMaximumSize() { return new Dimension(Integer.MAX_VALUE, getPreferredSize().height); }
     }
 
-    /** Two fields side by side. */
+    /** Two fields side by side with dynamic height so populated combos and wrapped helper text never clip. */
     protected static JComponent pair(JComponent a, JComponent b) {
-        JPanel p = UI.clear(new GridLayout(1, 2, 14, 0));
-        p.add(a); p.add(b);
-        p.setMaximumSize(new Dimension(Integer.MAX_VALUE, p.getPreferredSize().height));
+        JPanel p = new JPanel(new GridLayout(1, 2, 14, 0)) {
+            @Override public Dimension getMaximumSize() {
+                return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+            }
+        };
+        p.setOpaque(false);
+        p.add(a);
+        p.add(b);
         return p;
     }
 

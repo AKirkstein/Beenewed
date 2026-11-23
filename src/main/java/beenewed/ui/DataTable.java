@@ -149,6 +149,7 @@ public class DataTable extends JPanel {
     public static class ColumnLayout implements LayoutManager {
         private final float[] w; private final int[] a;
         private static final int GAP = 12;
+        private static final int RL_PAD = 10;
         public ColumnLayout(float[] weights, int[] aligns) { w = weights; a = aligns; }
         public void addLayoutComponent(String n, Component c) {}
         public void removeLayoutComponent(Component c) {}
@@ -169,13 +170,16 @@ public class DataTable extends JPanel {
             Component[] cs = p.getComponents();
             for (int i = 0; i < cs.length && i < w.length; i++) {
                 int colW = Math.round(avail * w[i] / total);
-                int cellW = colW - (i < w.length - 1 ? GAP : 0);
+                int leftPad = (i > 0 && a[i - 1] == R && a[i] == L) ? RL_PAD : 0;
+                int rightPad = (i < w.length - 1 ? GAP : 0)
+                        + (i < w.length - 1 && a[i] == R && a[i + 1] == L ? RL_PAD : 0);
+                int cellW = Math.max(0, colW - leftPad - rightPad);
                 Dimension pref = cs[i].getPreferredSize();
                 int cw = Math.min(pref.width, cellW);
                 if (cs[i] instanceof JLabel && !(cs[i] instanceof UI.Pill)) cw = cellW;   // labels fill the cell and align their own text
-                int cx = (int) x;
-                if (a[i] == R) cx = (int) x + cellW - cw;
-                else if (a[i] == C) cx = (int) x + (cellW - cw) / 2;
+                int cx = (int) x + leftPad;
+                if (a[i] == R) cx = (int) x + leftPad + cellW - cw;
+                else if (a[i] == C) cx = (int) x + leftPad + (cellW - cw) / 2;
                 int ch = Math.min(pref.height, innerH);
                 cs[i].setBounds(cx, in.top + (innerH - ch) / 2, cw, ch);
                 x += colW;

@@ -81,21 +81,23 @@ class StorePhase2Test {
         Store st = Store.get();
         Subscription netflix = st.getSubscription(1);
         LocalDate originalDue = netflix.nextRenewal;
+        String firstPeriod = BillingRules.defaultPeriodLabel(originalDue, netflix.cycle);
+        String altFirstPeriod = originalDue.getYear() + "-" + String.format("%02d", originalDue.getMonthValue());
         assertEquals(1, st.overdue().size(), "Overdue subscription should appear before payment");
 
         // Future payment date is rejected before hitting Supabase
-        Payment futureDate = new Payment(0, netflix, Store.today().plusDays(1), 549.00, "November 2026", "GCash", null);
+        Payment futureDate = new Payment(0, netflix, Store.today().plusDays(1), 549.00, firstPeriod, "GCash", null);
         ValidationException futureErr = assertThrows(ValidationException.class, () -> st.recordPayment(futureDate));
         assertTrue(futureErr.getMessage().toLowerCase().contains("future"));
         assertTrue(httpLog.isEmpty(), "Future payment date must not send HTTP requests");
 
         // Mismatched amount rejected before hitting Supabase
-        Payment wrongAmount = new Payment(0, netflix, Store.today(), 100.00, "Current Cycle", "GCash", null);
+        Payment wrongAmount = new Payment(0, netflix, Store.today(), 100.00, firstPeriod, "GCash", null);
         assertThrows(ValidationException.class, () -> st.recordPayment(wrongAmount));
         assertTrue(httpLog.isEmpty(), "Rejected payment must not send HTTP requests");
 
         // Valid full-price payment succeeds, persists payment + patches next_renewal_date
-        Payment valid = new Payment(0, netflix, Store.today(), 549.00, "November 2026", "GCash", "Receipt #1");
+        Payment valid = new Payment(0, netflix, Store.today(), 549.00, firstPeriod, "GCash", "Receipt #1");
         st.recordPayment(valid);
 
         assertEquals(originalDue.plusMonths(1), netflix.nextRenewal);
@@ -106,7 +108,7 @@ class StorePhase2Test {
 
         // Duplicate period (even in alternate format) is rejected before hitting Supabase
         httpLog.clear();
-        Payment dup = new Payment(0, netflix, Store.today(), 549.00, "Nov 2026", "Cash", null);
+        Payment dup = new Payment(0, netflix, Store.today(), 549.00, altFirstPeriod, "Cash", null);
         assertThrows(ValidationException.class, () -> st.recordPayment(dup));
         assertTrue(httpLog.isEmpty());
 
@@ -114,6 +116,49 @@ class StorePhase2Test {
         Payment recorded = st.paymentsFor(netflix).get(0);
         assertThrows(ValidationException.class, () -> st.updatePayment(recorded));
         assertThrows(ValidationException.class, () -> st.deletePayment(recorded));
+    }
+
+    @Test
+    void sequentialPayAheadAdvancesDueDateAndBlocksSkippingUnpaidPeriods() {
+        Store st = Store.get();
+        Subscription netflix = st.getSubscription(1);
+        LocalDate originalDue = netflix.nextRenewal;
+
+        List<BillingRules.PeriodOption> initialSchedule = st.upcomingUnpaidPeriods(netflix);
+        assertEquals(6, initialSchedule.size(), "Monthly subscription should expose 6 sequential unpaid periods");
+
+        String period1 = initialSchedule.get(0).label();
+        String period2 = initialSchedule.get(1).label();
+        String period3 = initialSchedule.get(2).label();
+
+        // Skipping period 1 to pay period 2 is rejected before hitting Supabase
+        httpLog.clear();
+        ValidationException skipErr = assertThrows(ValidationException.class,
+                () -> st.recordPayment(new Payment(0, netflix, Store.today(), 549.00, period2, "GCash", null)));
+        assertTrue(skipErr.getMessage().toLowerCase().contains("skip"));
+        assertTrue(httpLog.isEmpty(), "Skipped period must be rejected locally without HTTP requests");
+
+        // Pay period 1 (current/overdue), then pay ahead for period 2 and period 3 sequentially
+        st.recordPayment(new Payment(0, netflix, Store.today(), 549.00, period1, "GCash", null));
+        assertEquals(originalDue.plusMonths(1), netflix.nextRenewal);
+
+        st.recordPayment(new Payment(0, netflix, Store.today(), 549.00, period2, "GCash", "Pay ahead #1"));
+        assertEquals(originalDue.plusMonths(2), netflix.nextRenewal);
+        assertEquals(originalDue.plusMonths(2), sub1NextRenewal);
+
+        st.recordPayment(new Payment(0, netflix, Store.today(), 549.00, period3, "GCash", "Pay ahead #2"));
+        assertEquals(originalDue.plusMonths(3), netflix.nextRenewal);
+        assertEquals(originalDue.plusMonths(3), sub1NextRenewal);
+
+        // Next upcoming unpaid schedule starts right after period 3 and excludes paid periods 1..3
+        List<String> afterLabels = st.upcomingUnpaidPeriods(netflix).stream()
+                .map(BillingRules.PeriodOption::label)
+                .toList();
+        assertEquals(6, afterLabels.size());
+        assertEquals(BillingRules.defaultPeriodLabel(originalDue.plusMonths(3), netflix.cycle), afterLabels.get(0));
+        assertFalse(afterLabels.contains(period1));
+        assertFalse(afterLabels.contains(period2));
+        assertFalse(afterLabels.contains(period3));
     }
 
     @Test
@@ -148,7 +193,8 @@ class StorePhase2Test {
         st.saveSplitConfiguration(netflix, SplitAllocator.OWNER_KEY, true, SplitMode.CUSTOM, goodSplit);
 
         // Recording full bill succeeds, and Group Head distribution shows Ana & Ben pending
-        st.recordPayment(new Payment(0, netflix, Store.today(), 549.00, "November 2026", "GCash", null));
+        String firstPeriod = BillingRules.defaultPeriodLabel(netflix.nextRenewal, netflix.cycle);
+        st.recordPayment(new Payment(0, netflix, Store.today(), 549.00, firstPeriod, "GCash", null));
         Payment recorded = st.paymentsFor(netflix).get(0);
         DistributionSummary before = st.distributionFor(recorded);
         assertEquals(new BigDecimal("300.00"), before.totalToCollect());
@@ -176,8 +222,9 @@ class StorePhase2Test {
         assertEquals(SettlementStatus.PENDING, after.rows().get(2).status());
 
         // Recording next period using owner's designated split share (249.00) is also accepted
+        String nextPeriod = BillingRules.defaultPeriodLabel(netflix.nextRenewal, netflix.cycle);
         assertDoesNotThrow(() -> st.recordPayment(
-                new Payment(0, netflix, Store.today(), 249.00, "December 2026", "GCash", null)));
+                new Payment(0, netflix, Store.today(), 249.00, nextPeriod, "GCash", null)));
     }
 
     @Test
@@ -203,7 +250,8 @@ class StorePhase2Test {
         assertEquals(SplitAllocator.memberKey(ben.id), st.splitConfigFor(netflix).payerKey());
 
         // 3. Record full payment with Ben as Primary Payer -> Account Owner starts Pending (183.00)
-        st.recordPayment(new Payment(0, netflix, Store.today(), 549.00, "November 2026", "GCash", null));
+        String firstPeriod = BillingRules.defaultPeriodLabel(netflix.nextRenewal, netflix.cycle);
+        st.recordPayment(new Payment(0, netflix, Store.today(), 549.00, firstPeriod, "GCash", null));
         Payment recorded = st.paymentsFor(netflix).get(0);
         DistributionSummary before = st.distributionFor(recorded);
         assertEquals(SplitAllocator.memberKey(ben.id), before.payerKey());

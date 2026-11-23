@@ -90,8 +90,20 @@ class PaymentDialogReadOnlyTest {
                 }
 
                 assertEquals(1, dateFields.size(), "Expected Payment Date DateField");
-                assertTrue(checkedTextInputs >= 3, "Expected Date, Amount, and Period text fields");
-                assertTrue(checkedCombos >= 4, "Expected Subscription, Scope, Payer, and Payment Method combos");
+                assertTrue(checkedTextInputs >= 2, "Expected Date and Amount text fields");
+                assertTrue(checkedCombos >= 5, "Expected Subscription, Scope, Payer, Renewal Period, and Payment Method combos");
+
+                // Receipt Renewal Period combo must be disabled, non-editable, and show the exact recorded period
+                JComboBox<?> receiptPeriodCombo = all.stream()
+                        .filter(JComboBox.class::isInstance)
+                        .map(JComboBox.class::cast)
+                        .filter(cb -> payment.period.equals(cb.getSelectedItem()))
+                        .findFirst()
+                        .orElseThrow(() -> new AssertionError("Expected disabled Renewal Period JComboBox in receipt dialog"));
+                assertFalse(receiptPeriodCombo.isEnabled(), "Receipt Renewal Period JComboBox must be disabled");
+                assertFalse(receiptPeriodCombo.isEditable(), "Receipt Renewal Period JComboBox must be non-editable");
+                assertEquals(1, receiptPeriodCombo.getItemCount());
+                assertEquals("November 2026", receiptPeriodCombo.getSelectedItem());
 
                 // Attempting to click the calendar picker button must not open popup or alter date
                 DateField df = dateFields.get(0);
@@ -119,17 +131,23 @@ class PaymentDialogReadOnlyTest {
 
                 PaymentDialog newPayDialog = new PaymentDialog(frame, sub);
                 try {
-                    // Renewal Period text field must be strictly non-editable even in creation mode
-                    List<JTextField> newPayFields = collectAll(newPayDialog.body).stream()
-                            .filter(JTextField.class::isInstance)
-                            .map(JTextField.class::cast)
-                            .toList();
-                    JTextField periodField = newPayFields.stream()
-                            .filter(tf -> "December 2026".equals(tf.getText()))
+                    // Renewal Period must be a non-editable JComboBox populated with sequential unpaid periods
+                    JComboBox<?> periodCombo = collectAll(newPayDialog.body).stream()
+                            .filter(JComboBox.class::isInstance)
+                            .map(JComboBox.class::cast)
+                            .filter(cb -> "December 2026".equals(cb.getSelectedItem()))
                             .findFirst()
-                            .orElseThrow(() -> new AssertionError("Expected auto-computed Renewal Period field"));
-                    assertFalse(periodField.isEditable(), "Renewal Period must be strictly read-only during payment creation");
-                    assertFalse(periodField.isFocusable(), "Renewal Period must not be focusable during payment creation");
+                            .orElseThrow(() -> new AssertionError("Expected Renewal Period JComboBox populated with sequential unpaid periods"));
+                    assertFalse(periodCombo.isEditable(), "Renewal Period JComboBox must be non-editable");
+                    assertEquals(6, periodCombo.getItemCount(), "Expected 6 consecutive unpaid monthly periods");
+                    assertEquals("December 2026", periodCombo.getItemAt(0));
+                    assertEquals("January 2027", periodCombo.getItemAt(1));
+                    assertEquals("May 2027", periodCombo.getItemAt(5));
+
+                    // Picking a later period (skipping unpaid December 2026) must fail validation
+                    periodCombo.setSelectedIndex(1);
+                    assertNull(newPayDialog.prepareSave(), "Skipping unpaid December 2026 must fail inline validation");
+                    periodCombo.setSelectedIndex(0);
 
                     // Replace date with impossible calendar date 02/30/2026 -> must reject cleanly
                     for (Component c : collectAll(newPayDialog.body)) {
@@ -146,6 +164,14 @@ class PaymentDialogReadOnlyTest {
                         }
                     }
                     assertNull(newPayDialog.prepareSave(), "Future payment date must fail inline validation");
+
+                    // Valid today date + next sequential unpaid period -> prepareSave succeeds
+                    for (Component c : collectAll(newPayDialog.body)) {
+                        if (c instanceof DateField payDf) {
+                            payDf.setDate(Store.today());
+                        }
+                    }
+                    assertNotNull(newPayDialog.prepareSave(), "Valid sequential period and paymentDate <= today must pass");
                 } finally {
                     newPayDialog.dispose();
                 }

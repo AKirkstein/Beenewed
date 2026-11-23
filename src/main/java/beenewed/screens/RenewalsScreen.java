@@ -2,7 +2,6 @@ package beenewed.screens;
 
 import beenewed.App;
 import beenewed.model.BillingRules;
-import beenewed.model.CsvExporter;
 import beenewed.model.Models.*;
 import beenewed.model.Store;
 import beenewed.ui.*;
@@ -86,8 +85,8 @@ public class RenewalsScreen extends JPanel {
         String due = dueFilter.selected();
         List<Subscription> list = filterRenewals(st.byRenewal(st.subscriptions), status, due, Store.today());
 
-        DataTable t = new DataTable(new String[]{"Subscription", "Status", "Billing Cycle", "Next Renewal", "Expected\nAmount", "Due", "Actions"},
-                new float[]{1.9f, 1.0f, 1.1f, 1.3f, 1.1f, 1.5f, 2.7f},
+        DataTable t = new DataTable(new String[]{"Subscription", "Status", "Billing\nCycle", "Next Renewal", "Expected\nAmount", "Due", "Actions"},
+                new float[]{1.8f, 1.45f, 1.05f, 1.3f, 1.25f, 1.65f, 2.6f},
                 new int[]{DataTable.L, DataTable.L, DataTable.L, DataTable.L, DataTable.R, DataTable.L, DataTable.R}, true);
         for (Subscription s : list) {
             UI.Btn view = UI.tableAction("View Details");
@@ -134,13 +133,6 @@ public class RenewalsScreen extends JPanel {
     // ---------------------------------------------------------------- History
     private JComponent historyCard() {
         UI.RoundPanel card = UI.card(new BorderLayout(0, 16), 18);
-        UI.Btn exportCsv = UI.secondary("Export CSV", Icons.Type.SAVE);
-        exportCsv.setToolTipText("Export recorded payment ledger to CSV");
-        exportCsv.addActionListener(e -> {
-            Store st = Store.get();
-            String csv = CsvExporter.exportPaymentLedger(st.paymentsNewestFirst(), st::payerNameFor);
-            Common.exportCsvWithDialog(this, "beenewed-payment-ledger-" + Store.today() + ".csv", csv);
-        });
         UI.Btn rec = UI.primary("Record Payment", Icons.Type.PLUS);
         rec.addActionListener(e -> App.get().recordPayment(null));
 
@@ -156,7 +148,7 @@ public class RenewalsScreen extends JPanel {
         JPanel filters = UI.hrow(18, labeled("Payment Date:", payDate), labeled("Subscription Status:", payStatus), searchWrap);
         card.add(UI.vstack(14, UI.split(
                 Common.cardHeading(null, "Payment History", "Read-only ledger of recorded payments across your subscriptions."),
-                UI.hrow(8, exportCsv, rec)), filters), BorderLayout.NORTH);
+                rec), filters), BorderLayout.NORTH);
         payTableHolder = UI.clear(new BorderLayout());
         payTableHolder.add(historyTable());
         card.add(payTableHolder, BorderLayout.CENTER);

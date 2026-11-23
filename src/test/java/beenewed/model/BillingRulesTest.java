@@ -122,4 +122,47 @@ class BillingRulesTest {
         assertTrue(futureErr.getMessage().toLowerCase().contains("future"));
         assertThrows(ValidationException.class, () -> BillingRules.validatePaymentDate(null, today));
     }
+
+    @Test
+    void upcomingUnpaidPeriodsComputesConsecutiveCyclesAndExcludesAlreadyPaid() {
+        Subscription monthly = sub(1, Cycle.MONTHLY, 549.00, LocalDate.of(2026, 11, 15), Status.ACTIVE);
+        Payment novPaid = new Payment(10, monthly, LocalDate.of(2026, 11, 10), 549.00, "November 2026", "GCash", null);
+
+        List<String> labels = BillingRules.upcomingUnpaidPeriodLabels(monthly, List.of(novPaid));
+        assertEquals(List.of(
+                "December 2026",
+                "January 2027",
+                "February 2027",
+                "March 2027",
+                "April 2027",
+                "May 2027"), labels);
+
+        Subscription yearly = sub(2, Cycle.YEARLY, 1990.00, LocalDate.of(2026, 11, 15), Status.ACTIVE);
+        List<String> yearlyLabels = BillingRules.upcomingUnpaidPeriodLabels(yearly, List.of());
+        assertEquals(List.of("November 2026", "November 2027", "November 2028"), yearlyLabels);
+    }
+
+    @Test
+    void sequentialPeriodValidationAllowsNextUnpaidAndRejectsSkippedOrAlreadyPaid() {
+        Subscription netflix = sub(1, Cycle.MONTHLY, 549.00, LocalDate.of(2026, 11, 15), Status.ACTIVE);
+        Payment novPaid = new Payment(10, netflix, LocalDate.of(2026, 11, 10), 549.00, "November 2026", "GCash", null);
+
+        // Next unpaid period is December 2026 -> accepted and advances due date to Jan 15, 2027
+        BillingRules.PeriodOption dec = BillingRules.validateSequentialPeriod(netflix, "December 2026", List.of(novPaid));
+        assertEquals(LocalDate.of(2026, 12, 15), dec.dueDate());
+        assertEquals("December 2026", dec.label());
+        assertEquals(LocalDate.of(2027, 1, 15),
+                BillingRules.nextDueDateAfterPayment(netflix, dec, List.of(novPaid)));
+
+        // Already-paid period rejected (even in alternate format)
+        ValidationException dupErr = assertThrows(ValidationException.class,
+                () -> BillingRules.validateSequentialPeriod(netflix, "Nov 2026", List.of(novPaid)));
+        assertTrue(dupErr.getMessage().toLowerCase().contains("already"));
+
+        // Skipping unpaid December 2026 to pay January 2027 rejected
+        ValidationException skipErr = assertThrows(ValidationException.class,
+                () -> BillingRules.validateSequentialPeriod(netflix, "January 2027", List.of(novPaid)));
+        assertTrue(skipErr.getMessage().toLowerCase().contains("skip"));
+        assertTrue(skipErr.getMessage().contains("December 2026"));
+    }
 }

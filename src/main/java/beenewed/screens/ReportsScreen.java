@@ -7,9 +7,7 @@ import beenewed.model.AnalyticsEngine.EfficiencyReport;
 import beenewed.model.AnalyticsEngine.ForecastMonth;
 import beenewed.model.AnalyticsEngine.ForecastReport;
 import beenewed.model.AnalyticsEngine.UsageEfficiency;
-import beenewed.model.CsvExporter;
 import beenewed.model.Models.*;
-import beenewed.model.SplitAllocator.DistributionSummary;
 import beenewed.model.Store;
 import beenewed.ui.*;
 
@@ -27,7 +25,7 @@ import java.util.stream.Collectors;
 
 /**
  * S5 — Reports & Analytics: Actual Paid, Recurring Spend & 1–6 Month Forecast,
- * Usage & Cost Efficiency Telemetry, and CSV Summary Exports.
+ * and Usage & Cost Efficiency Telemetry.
  */
 public class ReportsScreen extends JPanel {
     private static final String[] HORIZON_LABELS = {"1 Month", "2 Months", "3 Months", "4 Months", "5 Months", "6 Months"};
@@ -88,13 +86,10 @@ public class ReportsScreen extends JPanel {
         filters.add(applyBar, BorderLayout.SOUTH);
         buildFilterRow();
 
-        UI.Btn exportBtn = UI.secondary("Export CSV", Icons.Type.SAVE);
-        exportBtn.addActionListener(e -> buildExportMenu().show(exportBtn, 0, exportBtn.getHeight() + 4));
-
         JComponent header = Common.pageHeader(
                 "Reports & Analytics",
                 "Review actual spending, recurring commitments, 1\u20136 month forecasts, and usage efficiency.",
-                exportBtn);
+                null);
         add(Common.page(UI.vstack(16, header, filters, results)), BorderLayout.CENTER);
     }
 
@@ -104,39 +99,6 @@ public class ReportsScreen extends JPanel {
         aBasis = clamped;
         buildFilterRow();
         refresh();
-    }
-
-    private JPopupMenu buildExportMenu() {
-        Store st = Store.get();
-        String stamp = Store.today().toString();
-        JPopupMenu menu = new JPopupMenu();
-
-        JMenuItem ledger = menuItem("Export Payment Ledger (.csv)", Icons.Type.RECEIPT, () -> {
-            String csv = CsvExporter.exportPaymentLedger(st.paymentsNewestFirst(), st::payerNameFor);
-            Common.exportCsvWithDialog(this, "beenewed-payment-ledger-" + stamp + ".csv", csv);
-        });
-        JMenuItem subs = menuItem("Export Active Subscriptions (.csv)", Icons.Type.CARD, () -> {
-            String csv = CsvExporter.exportActiveSubscriptions(st.usageEfficiencyReport().rows());
-            Common.exportCsvWithDialog(this, "beenewed-active-subscriptions-" + stamp + ".csv", csv);
-        });
-        JMenuItem splits = menuItem("Export Family Split Distributions (.csv)", Icons.Type.USERS, () -> {
-            List<DistributionSummary> dists = st.allSharedPaymentDistributions();
-            String csv = CsvExporter.exportFamilySplits(dists);
-            Common.exportCsvWithDialog(this, "beenewed-family-splits-" + stamp + ".csv", csv);
-        });
-
-        menu.add(ledger);
-        menu.add(subs);
-        menu.add(splits);
-        return menu;
-    }
-
-    private static JMenuItem menuItem(String label, Icons.Type icon, Runnable action) {
-        JMenuItem item = new JMenuItem(label, Icons.of(icon, 14, Theme.TEXT_2));
-        item.setFont(Theme.BODY);
-        item.setBorder(new EmptyBorder(7, 10, 7, 16));
-        item.addActionListener(e -> action.run());
-        return item;
     }
 
     private static JComponent field(String label, JComponent c) { return UI.vstack(6, UI.caps(label), c); }

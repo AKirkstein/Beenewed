@@ -16,6 +16,7 @@ import java.time.format.DateTimeFormatterBuilder;
 import java.time.format.DateTimeParseException;
 import java.time.format.TextStyle;
 import java.time.temporal.IsoFields;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -27,10 +28,18 @@ import java.util.regex.Pattern;
 
 /**
  * Pure domain rules for payment validation, duplicate billing-period prevention,
- * amount alignment, due-date advancement (weekly/monthly/yearly), and overdue evaluation.
+ * sequential pay-ahead renewal period calculation, amount alignment,
+ * due-date advancement (weekly/monthly/yearly), and overdue evaluation.
  */
 public final class BillingRules {
+    public static final int DEFAULT_PAY_AHEAD_WEEKLY = 6;
+    public static final int DEFAULT_PAY_AHEAD_MONTHLY = 6;
+    public static final int DEFAULT_PAY_AHEAD_YEARLY = 3;
+
     private BillingRules() {}
+
+    /** A single unpaid billing period in a subscription's sequential pay-ahead schedule. */
+    public record PeriodOption(LocalDate dueDate, String label, String canonicalKey) {}
 
     public enum Interval {
         WEEKLY,
@@ -46,6 +55,17 @@ public final class BillingRules {
                 case YEARLY -> YEARLY;
             };
         }
+    }
+
+    public static int defaultPayAheadCount(Interval interval) {
+        if (interval == null) {
+            return DEFAULT_PAY_AHEAD_MONTHLY;
+        }
+        return switch (interval) {
+            case WEEKLY -> DEFAULT_PAY_AHEAD_WEEKLY;
+            case MONTHLY -> DEFAULT_PAY_AHEAD_MONTHLY;
+            case YEARLY -> DEFAULT_PAY_AHEAD_YEARLY;
+        };
     }
 
     private static final DateTimeFormatter MONTH_YEAR_FULL = new DateTimeFormatterBuilder()
@@ -159,6 +179,144 @@ public final class BillingRules {
 
     public static String canonicalPeriodKey(String renewalPeriod, Cycle cycle) {
         return canonicalPeriodKey(renewalPeriod, cycle == null ? Interval.MONTHLY : Interval.fromCycle(cycle));
+    }
+
+    /**
+     * Collects canonical keys for every renewal period already recorded for {@code subscription}.
+     */
+    public static Set<String> recordedPeriodKeys(Subscription subscription, List<Payment> existingPayments) {
+        Set<String> keys = new LinkedHashSet<>();
+        if (subscription == null || existingPayments == null || existingPayments.isEmpty()) {
+            return keys;
+        }
+        Interval interval = Interval.fromCycle(subscription.cycle);
+        for (Payment existing : existingPayments) {
+            if (existing == null || existing.sub == null || existing.sub.id != subscription.id) {
+                continue;
+            }
+            String key = canonicalPeriodKey(existing.period, interval);
+            if (!key.isEmpty()) {
+                keys.add(key);
+            }
+        }
+        return keys;
+    }
+
+    /**
+     * Calculates the next available unpaid renewal periods sequentially for {@code subscription}
+     * based on its billing cycle (default: 6 consecutive unpaid monthly/weekly periods, 3 yearly).
+     * Already-paid periods are always excluded.
+     */
+    public static List<PeriodOption> upcomingUnpaidPeriods(
+            Subscription subscription,
+            List<Payment> existingPayments) {
+        if (subscription == null || subscription.cycle == null) {
+            return List.of();
+        }
+        return upcomingUnpaidPeriods(subscription, existingPayments, defaultPayAheadCount(Interval.fromCycle(subscription.cycle)));
+    }
+
+    /**
+     * Calculates up to {@code maxCount} consecutive unpaid renewal periods sequentially
+     * starting from the subscription's next due cycle, excluding any already-paid periods.
+     */
+    public static List<PeriodOption> upcomingUnpaidPeriods(
+            Subscription subscription,
+            List<Payment> existingPayments,
+            int maxCount) {
+        if (subscription == null || subscription.nextRenewal == null || subscription.cycle == null || maxCount <= 0) {
+            return List.of();
+        }
+        Interval interval = Interval.fromCycle(subscription.cycle);
+        Set<String> paidKeys = recordedPeriodKeys(subscription, existingPayments);
+        List<PeriodOption> options = new ArrayList<>(maxCount);
+        LocalDate cursor = subscription.nextRenewal;
+        int maxSteps = maxCount + paidKeys.size() + 24;
+        for (int step = 0; step < maxSteps && options.size() < maxCount; step++) {
+            String label = defaultPeriodLabel(cursor, interval);
+            String key = canonicalPeriodKey(label, interval);
+            if (!key.isEmpty() && !paidKeys.contains(key)) {
+                options.add(new PeriodOption(cursor, label, key));
+            }
+            cursor = advanceNextDueDate(cursor, interval);
+        }
+        return List.copyOf(options);
+    }
+
+    /** Returns just the display labels of the sequential unpaid upcoming periods. */
+    public static List<String> upcomingUnpaidPeriodLabels(
+            Subscription subscription,
+            List<Payment> existingPayments) {
+        return upcomingUnpaidPeriods(subscription, existingPayments).stream()
+                .map(PeriodOption::label)
+                .toList();
+    }
+
+    /**
+     * Validates that {@code renewalPeriod} is non-blank, has not already been paid, and is the
+     * exact next unpaid period in sequence (SPayLater-style sequential pay-ahead: no skipping
+     * unpaid periods and no paying an already-paid period).
+     */
+    public static PeriodOption validateSequentialPeriod(
+            Subscription subscription,
+            String renewalPeriod,
+            List<Payment> existingPayments) {
+        if (subscription == null) {
+            throw new ValidationException("Subscription is required.");
+        }
+        if (renewalPeriod == null || renewalPeriod.isBlank()) {
+            throw new ValidationException("Renewal period is required.");
+        }
+        String trimmed = renewalPeriod.trim();
+        if (findDuplicatePayment(subscription, trimmed, existingPayments).isPresent()) {
+            throw new ValidationException("A payment for " + subscription.name
+                    + " in renewal period \"" + trimmed + "\" has already been recorded.");
+        }
+        List<PeriodOption> upcoming = upcomingUnpaidPeriods(subscription, existingPayments);
+        if (upcoming.isEmpty()) {
+            throw new ValidationException("Unable to determine the next unpaid renewal period for " + subscription.name + ".");
+        }
+        Interval interval = Interval.fromCycle(subscription.cycle);
+        String targetKey = canonicalPeriodKey(trimmed, interval);
+        PeriodOption nextExpected = upcoming.get(0);
+        if (nextExpected.canonicalKey().equals(targetKey)) {
+            return nextExpected;
+        }
+        boolean isLaterUpcoming = upcoming.stream()
+                .skip(1)
+                .anyMatch(opt -> opt.canonicalKey().equals(targetKey));
+        if (isLaterUpcoming) {
+            throw new ValidationException("Cannot skip unpaid renewal period \"" + nextExpected.label()
+                    + "\". Please pay periods sequentially starting with \"" + nextExpected.label() + "\".");
+        }
+        throw new ValidationException("Renewal period \"" + trimmed
+                + "\" is not the next unpaid period. Next due period is \"" + nextExpected.label() + "\".");
+    }
+
+    /**
+     * Advances a subscription's next renewal date to the billing cycle immediately after
+     * {@code paidPeriod}, skipping past any cycles already recorded in {@code existingPayments}.
+     */
+    public static LocalDate nextDueDateAfterPayment(
+            Subscription subscription,
+            PeriodOption paidPeriod,
+            List<Payment> existingPayments) {
+        if (subscription == null || paidPeriod == null || paidPeriod.dueDate() == null) {
+            throw new ValidationException("Subscription and paid period are required to advance due date.");
+        }
+        Interval interval = Interval.fromCycle(subscription.cycle);
+        Set<String> paidKeys = recordedPeriodKeys(subscription, existingPayments);
+        paidKeys.add(paidPeriod.canonicalKey());
+        LocalDate nextDue = advanceNextDueDate(paidPeriod.dueDate(), interval);
+        int maxSteps = paidKeys.size() + 24;
+        for (int step = 0; step < maxSteps; step++) {
+            String key = canonicalPeriodKey(defaultPeriodLabel(nextDue, interval), interval);
+            if (key.isEmpty() || !paidKeys.contains(key)) {
+                break;
+            }
+            nextDue = advanceNextDueDate(nextDue, interval);
+        }
+        return nextDue;
     }
 
     /**

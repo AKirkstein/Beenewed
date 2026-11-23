@@ -379,6 +379,20 @@ public final class Store {
         });
     }
 
+    /**
+     * Returns the next consecutive unpaid renewal periods for {@code subscription}
+     * (SPayLater-style sequential pay-ahead schedule).
+     */
+    public List<BillingRules.PeriodOption> upcomingUnpaidPeriods(Subscription subscription) {
+        if (subscription == null) {
+            return List.of();
+        }
+        synchronized (cacheLock) {
+            Subscription resolved = findCachedSubscription(subscription.id);
+            return BillingRules.upcomingUnpaidPeriods(resolved != null ? resolved : subscription, payments);
+        }
+    }
+
     public void recordPayment(Payment payment) {
         Objects.requireNonNull(payment, "payment must not be null");
         if (payment.sub == null) {
@@ -386,6 +400,7 @@ public final class Store {
         }
         withBackend(() -> {
             Subscription snapshotSub;
+            BillingRules.PeriodOption paidPeriod;
             LocalDate nextRenewalToSave;
             String encodedNotes;
             synchronized (cacheLock) {
@@ -397,13 +412,7 @@ public final class Store {
                     throw new ValidationException("Cannot record a payment for a cancelled subscription.");
                 }
                 BillingRules.validatePaymentDate(payment.date, today());
-                if (payment.period == null || payment.period.isBlank()) {
-                    throw new ValidationException("Renewal period is required.");
-                }
-                BillingRules.findDuplicatePayment(existingSub, payment.period, payments).ifPresent(dup -> {
-                    throw new ValidationException("A payment for " + existingSub.name
-                            + " in renewal period \"" + payment.period.trim() + "\" has already been recorded.");
-                });
+                paidPeriod = BillingRules.validateSequentialPeriod(existingSub, payment.period, payments);
 
                 List<Member> subMembers = membersForLocked(existingSub.id);
                 BigDecimal payAmount = money(payment.amount);
@@ -413,7 +422,7 @@ public final class Store {
 
                 snapshotSub = existingSub;
                 nextRenewalToSave = existingSub.status == Status.ACTIVE
-                        ? BillingRules.advanceNextDueDate(existingSub.nextRenewal, existingSub.cycle)
+                        ? BillingRules.nextDueDateAfterPayment(existingSub, paidPeriod, payments)
                         : null;
                 encodedNotes = attachSplitSnapshotIfNeeded(payment.notes, existingSub, subMembers, payAmount, subPrice);
             }
@@ -423,7 +432,7 @@ public final class Store {
                     snapshotSub,
                     payment.date,
                     payment.amount,
-                    payment.period.trim(),
+                    paidPeriod.label(),
                     payment.method,
                     encodedNotes);
             com.beenewed.backend.model.Payment created =
