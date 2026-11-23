@@ -13,6 +13,7 @@ import com.beenewed.backend.model.SubscriptionStatus;
 import com.beenewed.backend.model.Theme;
 import com.beenewed.backend.model.UsageLog;
 import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonNull;
@@ -52,7 +53,7 @@ public final class SupabaseRestClient implements AutoCloseable {
     private final SupabaseAuthService authService;
     private final HttpClient http;
     private final ExecutorService fetchPool;
-    private final Gson gson = new Gson();
+    private final Gson gson = new GsonBuilder().serializeNulls().create();
 
     public record UserDataSnapshot(
             List<Subscription> subscriptions,

@@ -64,21 +64,8 @@ public class SubscriptionsScreen extends JPanel {
         filters.add(left, BorderLayout.WEST);
         filters.add(showing, BorderLayout.EAST);
 
-        // ---- Keyboard hints
-        JPanel hints = UI.hrow(6, kbd("\u2191/\u2193"), UI.muted("Select Row"), Box.createHorizontalStrut(10),
-                kbd("Enter"), UI.muted("Open Details"), Box.createHorizontalStrut(10), kbd("Ins"), UI.muted("New Subscription"));
-
-        JPanel body = UI.vstack(14, header, filters, tableHolder, hints);
+        JPanel body = UI.vstack(14, header, filters, tableHolder);
         add(Common.page(body), BorderLayout.CENTER);
-    }
-
-    private JComponent kbd(String t) {
-        JLabel l = UI.label(t, Theme.TINY, Theme.TEXT_2);
-        l.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 10));
-        l.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(Theme.BORDER), new EmptyBorder(2, 5, 2, 5)));
-        l.setOpaque(true);
-        l.setBackground(Theme.SURFACE);
-        return l;
     }
 
     public void refresh() {
@@ -100,7 +87,7 @@ public class SubscriptionsScreen extends JPanel {
                 new float[]{2.6f, 1.7f, 1.3f, 1.5f, 1.6f, 1.3f, 1.4f},
                 new int[]{DataTable.L, DataTable.L, DataTable.R, DataTable.L, DataTable.L, DataTable.L, DataTable.R}, true);
         for (Subscription s : list) {
-            UI.Btn view = UI.secondary("View", null).small();
+            UI.Btn view = UI.tableAction("View");
             view.addActionListener(e -> App.get().openDetails(s, 0));
             UI.Btn more = new UI.Btn(null, null, UI.Kind.SECONDARY);
             more.setIcon(Icons.of(Icons.Type.DOTS, 14, Theme.TEXT_2));

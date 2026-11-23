@@ -55,9 +55,18 @@ public final class SplitAllocator {
             return new Participant(OWNER_KEY, OWNER_LABEL, true, null);
         }
 
+        public static Participant ownerParticipant(Member ownerMember) {
+            return new Participant(OWNER_KEY, OWNER_LABEL, true, ownerMember);
+        }
+
         public static Participant ofMember(Member member) {
             Objects.requireNonNull(member, "member must not be null");
             return new Participant(memberKey(member.id), member.name, false, member);
+        }
+
+        @Override
+        public String toString() {
+            return name;
         }
     }
 
@@ -106,6 +115,26 @@ public final class SplitAllocator {
 
     public static String memberKey(int memberId) {
         return "member:" + memberId;
+    }
+
+    /** Returns {@code true} if {@code member} is the internal persisted Account Owner record. */
+    public static boolean isOwnerMember(Member member) {
+        if (member == null || member.notes == null || member.notes.isBlank()) {
+            return false;
+        }
+        Map<String, String> kv = extractMetaMap(member.notes);
+        return "true".equalsIgnoreCase(kv.get("ownerRecord"));
+    }
+
+    /** Encodes the zero-migration metadata marker for the persisted Account Owner member record. */
+    public static String encodeOwnerMemberNotes() {
+        return "[[beenewed:ownerRecord=true]]";
+    }
+
+    /** Maps a persisted {@link Member} (regular or owner record) to its canonical participant key. */
+    public static String participantKey(Member member) {
+        Objects.requireNonNull(member, "member must not be null");
+        return isOwnerMember(member) ? OWNER_KEY : memberKey(member.id);
     }
 
     // ---------------------------------------------------------------------
@@ -198,8 +227,10 @@ public final class SplitAllocator {
     /** Resolves the active split configuration for a subscription from its members' metadata. */
     public static SplitConfig resolveSubscriptionSplit(Subscription sub, List<Member> members) {
         BigDecimal total = BillingRules.money(sub.price);
-        if (members == null || members.isEmpty()) {
-            Participant owner = Participant.ownerParticipant();
+        Member ownerRecord = findOwnerMember(members);
+        List<Member> regularMembers = filterRegularMembers(members);
+        if (regularMembers.isEmpty()) {
+            Participant owner = Participant.ownerParticipant(ownerRecord);
             return new SplitConfig(
                     OWNER_KEY,
                     true,
@@ -212,7 +243,7 @@ public final class SplitAllocator {
         String payerKey = OWNER_KEY;
         Map<String, BigDecimal> savedCustomShares = new LinkedHashMap<>();
 
-        for (Member m : members) {
+        for (Member m : regularMembers) {
             MemberSplitMeta meta = parseMemberMeta(m.notes);
             if (!meta.includeOwner()) {
                 includeOwner = false;
@@ -231,7 +262,7 @@ public final class SplitAllocator {
         List<Participant> participants = buildParticipants(members, includeOwner);
         String effectivePayer = resolveEffectivePayer(payerKey, participants);
 
-        if (mode == SplitMode.CUSTOM && savedCustomShares.size() == members.size()) {
+        if (mode == SplitMode.CUSTOM && savedCustomShares.size() == regularMembers.size()) {
             BigDecimal memberSum = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
             for (BigDecimal share : savedCustomShares.values()) {
                 memberSum = memberSum.add(share);
@@ -243,7 +274,7 @@ public final class SplitAllocator {
                     fullMap.put(OWNER_KEY, ownerShare);
                 }
             }
-            for (Member m : members) {
+            for (Member m : regularMembers) {
                 fullMap.put(memberKey(m.id), savedCustomShares.get(memberKey(m.id)));
             }
             if (fullMap.size() == participants.size() && sumEquals(fullMap.values(), total)) {
@@ -330,12 +361,12 @@ public final class SplitAllocator {
         Objects.requireNonNull(payment, "payment must not be null");
         BigDecimal totalPayment = BillingRules.money(payment.amount);
 
-        Map<Integer, BigDecimal> contributedByMember = new LinkedHashMap<>();
+        Map<String, BigDecimal> contributedByParticipant = new LinkedHashMap<>();
         if (paymentContributions != null) {
             for (Contribution c : paymentContributions) {
                 if (c == null || c.member == null) continue;
                 if (c.payment != null && c.payment.id != payment.id) continue;
-                contributedByMember.merge(c.member.id, BillingRules.money(c.amount), BigDecimal::add);
+                contributedByParticipant.merge(participantKey(c.member), BillingRules.money(c.amount), BigDecimal::add);
             }
         }
 
@@ -362,11 +393,9 @@ public final class SplitAllocator {
                 continue;
             }
 
-            BigDecimal paid = participant.member() == null
-                    ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP)
-                    : contributedByMember.getOrDefault(
-                            participant.member().id,
-                            BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
+            BigDecimal paid = contributedByParticipant.getOrDefault(
+                    participant.key(),
+                    BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
             BigDecimal pending = expected.subtract(paid);
             if (pending.signum() < 0) {
                 pending = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
@@ -454,19 +483,43 @@ public final class SplitAllocator {
     }
 
     public static List<Participant> buildParticipants(List<Member> members, boolean includeOwner) {
+        Member ownerRecord = findOwnerMember(members);
         List<Participant> list = new ArrayList<>();
         if (includeOwner) {
-            list.add(Participant.ownerParticipant());
+            list.add(Participant.ownerParticipant(ownerRecord));
         }
         if (members != null) {
             for (Member m : members) {
-                list.add(Participant.ofMember(m));
+                if (!isOwnerMember(m)) {
+                    list.add(Participant.ofMember(m));
+                }
             }
         }
         if (list.isEmpty()) {
-            list.add(Participant.ownerParticipant());
+            list.add(Participant.ownerParticipant(ownerRecord));
         }
         return list;
+    }
+
+    private static Member findOwnerMember(List<Member> members) {
+        if (members == null) return null;
+        for (Member m : members) {
+            if (isOwnerMember(m)) {
+                return m;
+            }
+        }
+        return null;
+    }
+
+    private static List<Member> filterRegularMembers(List<Member> members) {
+        if (members == null || members.isEmpty()) return Collections.emptyList();
+        List<Member> regular = new ArrayList<>(members.size());
+        for (Member m : members) {
+            if (!isOwnerMember(m)) {
+                regular.add(m);
+            }
+        }
+        return regular;
     }
 
     private static String resolveEffectivePayer(String preferredKey, List<Participant> participants) {

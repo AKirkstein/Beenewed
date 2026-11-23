@@ -1,7 +1,10 @@
 package beenewed.screens;
 
 import beenewed.model.Models.*;
+import beenewed.model.Store;
 import beenewed.ui.Icons;
+import beenewed.ui.Theme;
+import beenewed.ui.UI;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDate;
@@ -39,5 +42,20 @@ class RenewalsFilterTest {
         // Overdue due-date filter only flags ACTIVE subscriptions past their due date
         List<Subscription> overdueOnly = RenewalsScreen.filterRenewals(all, "All Statuses", "Overdue", today);
         assertEquals(List.of(overdueActive), overdueOnly);
+    }
+
+    @Test
+    void dueBadgeRespectsShowOverduePreference() {
+        Theme.apply(false);
+        LocalDate pastDue = Store.today().minusDays(3);
+
+        UI.Pill highlighted = Common.dueBadge(pastDue, 7, true);
+        assertEquals("Overdue 3 days", highlighted.getText());
+        assertEquals(Theme.RED, highlighted.getForeground());
+
+        UI.Pill neutral = Common.dueBadge(pastDue, 7, false);
+        assertEquals("3 days ago", neutral.getText());
+        assertEquals(Theme.MUTED, neutral.getForeground());
+        assertNotEquals(Theme.RED, neutral.getForeground());
     }
 }

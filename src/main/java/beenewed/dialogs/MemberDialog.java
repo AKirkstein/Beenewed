@@ -24,13 +24,17 @@ public class MemberDialog extends BaseDialog {
                 Icons.Type.USER_PLUS, m == null ? "Add Member" : "Save Member", Icons.Type.CHECK, 480);
         this.sub = sub;
         this.editing = m;
-        this.existingMeta = m == null ? SplitAllocator.MemberSplitMeta.DEFAULT : SplitAllocator.parseMemberMeta(m.notes);
+        SplitAllocator.SplitConfig currentSplit = Store.get().splitConfigFor(sub);
+        this.existingMeta = m == null
+                ? new SplitAllocator.MemberSplitMeta(false, null, currentSplit.includeOwner(), currentSplit.mode())
+                : SplitAllocator.parseMemberMeta(m.notes);
 
         place(linkedContext(sub, false)); gap(14);
         fName = new Field("Member Name", true, null, name, "Identifies the person sharing this subscription.");
         place(fName); gap(10);
 
-        primaryPayerBox.setSelected(existingMeta.payer());
+        boolean isCurrentPrimaryPayer = m != null && SplitAllocator.memberKey(m.id).equals(currentSplit.payerKey());
+        primaryPayerBox.setSelected(isCurrentPrimaryPayer);
         primaryPayerBox.setOpaque(false);
         primaryPayerBox.setFont(Theme.BODY);
         primaryPayerBox.setForeground(Theme.TEXT);

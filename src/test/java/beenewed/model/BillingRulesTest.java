@@ -110,4 +110,16 @@ class BillingRulesTest {
         assertFalse(BillingRules.isOverdue(Status.PAUSED, overdueDue, today));
         assertFalse(BillingRules.isOverdue(Status.CANCELLED, overdueDue, today));
     }
+
+    @Test
+    void paymentDateAllowsPastAndTodayButRejectsFutureDates() {
+        LocalDate today = LocalDate.of(2026, 11, 23);
+        assertDoesNotThrow(() -> BillingRules.validatePaymentDate(today.minusDays(10), today));
+        assertDoesNotThrow(() -> BillingRules.validatePaymentDate(today, today));
+
+        ValidationException futureErr = assertThrows(ValidationException.class,
+                () -> BillingRules.validatePaymentDate(today.plusDays(1), today));
+        assertTrue(futureErr.getMessage().toLowerCase().contains("future"));
+        assertThrows(ValidationException.class, () -> BillingRules.validatePaymentDate(null, today));
+    }
 }

@@ -396,6 +396,7 @@ public final class Store {
                 if (existingSub.status == Status.CANCELLED) {
                     throw new ValidationException("Cannot record a payment for a cancelled subscription.");
                 }
+                BillingRules.validatePaymentDate(payment.date, today());
                 if (payment.period == null || payment.period.isBlank()) {
                     throw new ValidationException("Renewal period is required.");
                 }
@@ -593,24 +594,74 @@ public final class Store {
     }
 
     public void recordContribution(Contribution contribution) {
+        Objects.requireNonNull(contribution, "contribution must not be null");
+        if (contribution.member == null) {
+            throw new ValidationException("Contribution member is required");
+        }
+        SplitAllocator.Participant participant = SplitAllocator.isOwnerMember(contribution.member)
+                ? SplitAllocator.Participant.ownerParticipant(contribution.member)
+                : SplitAllocator.Participant.ofMember(contribution.member);
+        recordParticipantContribution(
+                contribution.sub != null ? contribution.sub : contribution.payment.sub,
+                participant,
+                contribution.payment,
+                contribution.amount,
+                contribution.date);
+    }
+
+    /**
+     * Records a reimbursement contribution for either a shared {@link Member} or the Account Owner
+     * (auto-creating a zero-migration owner member record on demand), enforcing the participant's
+     * assigned split share cap and overall payment cap.
+     */
+    public void recordParticipantContribution(
+            Subscription subscription,
+            SplitAllocator.Participant participant,
+            Payment paymentArg,
+            double amountValue,
+            LocalDate dateReceived) {
+        Objects.requireNonNull(participant, "participant must not be null");
+        Objects.requireNonNull(paymentArg, "payment must not be null");
         withBackend(() -> {
-            BigDecimal amount = money(contribution.amount);
+            BigDecimal amount = money(amountValue);
+            Subscription resolvedSub;
+            Payment resolvedPayment;
+            Member targetMember;
             synchronized (cacheLock) {
-                Payment payment = findCachedPayment(contribution.payment.id);
-                if (payment == null) {
-                    throw new NotFoundException("Payment not found: " + contribution.payment.id);
+                resolvedPayment = findCachedPayment(paymentArg.id);
+                if (resolvedPayment == null) {
+                    throw new NotFoundException("Payment not found: " + paymentArg.id);
                 }
-                Member member = findCachedMember(contribution.member.id);
-                if (member == null || member.sub.id != payment.sub.id) {
-                    throw new ValidationException("Contribution member must belong to the payment subscription");
+                resolvedSub = resolvedPayment.sub;
+                if (subscription != null && resolvedSub.id != subscription.id) {
+                    throw new ValidationException("Payment does not belong to the selected subscription");
                 }
-                BigDecimal prospective = sumContributionsForPayment(payment.id).add(amount);
-                if (prospective.compareTo(money(payment.amount)) > 0) {
+                String participantKey;
+                if (participant.owner()) {
+                    participantKey = SplitAllocator.OWNER_KEY;
+                    targetMember = findOwnerMemberLocked(resolvedSub.id);
+                } else {
+                    if (participant.member() == null) {
+                        throw new ValidationException("Contribution member is required");
+                    }
+                    targetMember = findCachedMember(participant.member().id);
+                    if (targetMember == null || targetMember.sub.id != resolvedSub.id) {
+                        throw new ValidationException("Contribution member must belong to the payment subscription");
+                    }
+                    participantKey = SplitAllocator.memberKey(targetMember.id);
+                }
+                validateContributionShareLocked(resolvedPayment, participantKey, amount, null);
+                BigDecimal prospective = sumContributionsForPayment(resolvedPayment.id).add(amount);
+                if (prospective.compareTo(money(resolvedPayment.amount)) > 0) {
                     throw new ValidationException("Total contributions must not exceed the payment amount");
                 }
             }
+            if (participant.owner() && targetMember == null) {
+                targetMember = ensureOwnerMember(resolvedSub);
+            }
+            Contribution toPersist = new Contribution(0, resolvedSub, targetMember, resolvedPayment, amount.doubleValue(), dateReceived);
             com.beenewed.backend.model.Contribution created =
-                    supabase.recordContribution((long) contribution.payment.id, toBackendContribution(contribution, null));
+                    supabase.recordContribution((long) resolvedPayment.id, toBackendContribution(toPersist, null));
             synchronized (cacheLock) {
                 Payment payment = requireMapped(
                         findCachedPayment(Math.toIntExact(created.paymentId())),
@@ -632,30 +683,85 @@ public final class Store {
     }
 
     public void updateContribution(Contribution contribution) {
+        Objects.requireNonNull(contribution, "contribution must not be null");
+        if (contribution.member == null) {
+            throw new ValidationException("Contribution member is required");
+        }
+        SplitAllocator.Participant participant = SplitAllocator.isOwnerMember(contribution.member)
+                ? SplitAllocator.Participant.ownerParticipant(contribution.member)
+                : SplitAllocator.Participant.ofMember(contribution.member);
+        updateParticipantContribution(
+                contribution.id,
+                contribution.sub != null ? contribution.sub : contribution.payment.sub,
+                participant,
+                contribution.payment,
+                contribution.amount,
+                contribution.date);
+    }
+
+    /**
+     * Updates an existing contribution for either a shared {@link Member} or the Account Owner,
+     * enforcing the participant's assigned split share cap and overall payment cap.
+     */
+    public void updateParticipantContribution(
+            int contributionId,
+            Subscription subscription,
+            SplitAllocator.Participant participant,
+            Payment paymentArg,
+            double amountValue,
+            LocalDate dateReceived) {
+        Objects.requireNonNull(participant, "participant must not be null");
+        Objects.requireNonNull(paymentArg, "payment must not be null");
         withBackend(() -> {
-            BigDecimal amount = money(contribution.amount);
+            BigDecimal amount = money(amountValue);
+            Subscription resolvedSub;
+            Payment resolvedPayment;
+            int existingPaymentId;
+            Member targetMember;
             synchronized (cacheLock) {
-                Contribution existing = findCachedContribution(contribution.id);
+                Contribution existing = findCachedContribution(contributionId);
                 if (existing == null) {
-                    throw new NotFoundException("Contribution not found: " + contribution.id);
+                    throw new NotFoundException("Contribution not found: " + contributionId);
                 }
-                Payment payment = findCachedPayment(contribution.payment.id);
-                if (payment == null) {
-                    throw new NotFoundException("Payment not found: " + contribution.payment.id);
+                existingPaymentId = existing.payment.id;
+                resolvedPayment = findCachedPayment(paymentArg.id);
+                if (resolvedPayment == null) {
+                    throw new NotFoundException("Payment not found: " + paymentArg.id);
                 }
-                Member member = findCachedMember(contribution.member.id);
-                if (member == null || member.sub.id != payment.sub.id) {
-                    throw new ValidationException("Contribution member must belong to the payment subscription");
+                resolvedSub = resolvedPayment.sub;
+                if (subscription != null && resolvedSub.id != subscription.id) {
+                    throw new ValidationException("Payment does not belong to the selected subscription");
                 }
-                BigDecimal prospective = sumContributionsForPayment(payment.id)
-                        .subtract(money(existing.amount))
-                        .add(amount);
-                if (prospective.compareTo(money(payment.amount)) > 0) {
+                String participantKey;
+                if (participant.owner()) {
+                    participantKey = SplitAllocator.OWNER_KEY;
+                    targetMember = findOwnerMemberLocked(resolvedSub.id);
+                } else {
+                    if (participant.member() == null) {
+                        throw new ValidationException("Contribution member is required");
+                    }
+                    targetMember = findCachedMember(participant.member().id);
+                    if (targetMember == null || targetMember.sub.id != resolvedSub.id) {
+                        throw new ValidationException("Contribution member must belong to the payment subscription");
+                    }
+                    participantKey = SplitAllocator.memberKey(targetMember.id);
+                }
+                validateContributionShareLocked(resolvedPayment, participantKey, amount, contributionId);
+                BigDecimal currentPaymentTotal = sumContributionsForPayment(resolvedPayment.id);
+                if (existingPaymentId == resolvedPayment.id) {
+                    currentPaymentTotal = currentPaymentTotal.subtract(money(existing.amount));
+                }
+                BigDecimal prospective = currentPaymentTotal.add(amount);
+                if (prospective.compareTo(money(resolvedPayment.amount)) > 0) {
                     throw new ValidationException("Total contributions must not exceed the payment amount");
                 }
             }
+            if (participant.owner() && targetMember == null) {
+                targetMember = ensureOwnerMember(resolvedSub);
+            }
+            Contribution toPersist = new Contribution(contributionId, resolvedSub, targetMember, resolvedPayment, amount.doubleValue(), dateReceived);
             com.beenewed.backend.model.Contribution updated =
-                    supabase.updateContribution((long) contribution.payment.id, toBackendContribution(contribution, contribution.id));
+                    supabase.updateContribution((long) existingPaymentId, toBackendContribution(toPersist, contributionId));
             synchronized (cacheLock) {
                 Payment payment = requireMapped(
                         findCachedPayment(Math.toIntExact(updated.paymentId())),
@@ -663,7 +769,7 @@ public final class Store {
                 Member member = requireMapped(
                         findCachedMember(Math.toIntExact(updated.memberId())),
                         "Member for contribution " + updated.id());
-                Contribution cached = findCachedContribution(contribution.id);
+                Contribution cached = findCachedContribution(contributionId);
                 if (cached != null) {
                     cached.sub = payment.sub;
                     cached.member = member;
@@ -976,6 +1082,18 @@ public final class Store {
     private List<Member> membersForLocked(int subscriptionId) {
         List<Member> result = new ArrayList<>();
         for (Member m : members) {
+            if (m.sub.id == subscriptionId && !SplitAllocator.isOwnerMember(m)) {
+                result.add(m);
+            }
+        }
+        result.sort(Comparator.comparing((Member m) -> m.name, String.CASE_INSENSITIVE_ORDER)
+                .thenComparingInt(m -> m.id));
+        return result;
+    }
+
+    private List<Member> allMembersForLocked(int subscriptionId) {
+        List<Member> result = new ArrayList<>();
+        for (Member m : members) {
             if (m.sub.id == subscriptionId) {
                 result.add(m);
             }
@@ -985,11 +1103,91 @@ public final class Store {
         return result;
     }
 
+    private Member findOwnerMemberLocked(int subscriptionId) {
+        for (Member m : members) {
+            if (m.sub.id == subscriptionId && SplitAllocator.isOwnerMember(m)) {
+                return m;
+            }
+        }
+        return null;
+    }
+
+    private Member ensureOwnerMember(Subscription subscription) {
+        synchronized (cacheLock) {
+            Member existing = findOwnerMemberLocked(subscription.id);
+            if (existing != null) {
+                return existing;
+            }
+        }
+        Member ownerTemplate = new Member(
+                0,
+                subscription,
+                SplitAllocator.OWNER_LABEL,
+                SplitAllocator.encodeOwnerMemberNotes());
+        com.beenewed.backend.model.Member created =
+                supabase.addMember((long) subscription.id, toBackendMember(ownerTemplate, null));
+        synchronized (cacheLock) {
+            Subscription sub = requireMapped(
+                    findCachedSubscription(Math.toIntExact(created.subscriptionId())),
+                    "Subscription for owner member " + created.id());
+            Member mapped = new Member(
+                    Math.toIntExact(created.id()),
+                    sub,
+                    created.name(),
+                    created.roleNotes());
+            members.add(mapped);
+            sortMembers();
+            return mapped;
+        }
+    }
+
+    private void validateContributionShareLocked(
+            Payment payment,
+            String participantKey,
+            BigDecimal newAmount,
+            Integer excludeContributionId) {
+        SplitAllocator.DistributionSummary summary = distributionForLocked(payment);
+        SplitAllocator.DistributionRow targetRow = null;
+        for (SplitAllocator.DistributionRow row : summary.rows()) {
+            if (row.participant().key().equals(participantKey)) {
+                targetRow = row;
+                break;
+            }
+        }
+        if (targetRow == null) {
+            throw new ValidationException("Selected participant is not included in this payment's split.");
+        }
+        if (targetRow.status() == SplitAllocator.SettlementStatus.PAYER
+                || participantKey.equals(summary.payerKey())) {
+            throw new ValidationException(targetRow.participant().name()
+                    + " is the designated payer for this payment and does not need a reimbursement contribution.");
+        }
+        BigDecimal assignedShare = targetRow.expectedShare();
+        BigDecimal alreadyPaid = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+        for (Contribution c : contributions) {
+            if (c.payment == null || c.payment.id != payment.id || c.member == null) continue;
+            if (excludeContributionId != null && c.id == excludeContributionId) continue;
+            if (SplitAllocator.participantKey(c.member).equals(participantKey)) {
+                alreadyPaid = alreadyPaid.add(money(c.amount));
+            }
+        }
+        BigDecimal remaining = assignedShare.subtract(alreadyPaid);
+        if (remaining.signum() <= 0) {
+            throw new ValidationException(targetRow.participant().name()
+                    + " has already paid their full assigned share (" + BillingRules.peso(assignedShare) + ") for this payment.");
+        }
+        if (newAmount.compareTo(remaining) > 0) {
+            throw new ValidationException("Contribution (" + BillingRules.peso(newAmount)
+                    + ") exceeds " + targetRow.participant().name() + "'s remaining share ("
+                    + BillingRules.peso(remaining) + " of " + BillingRules.peso(assignedShare) + ").");
+        }
+    }
+
     public SplitAllocator.SplitConfig splitConfigFor(Subscription subscription) {
         synchronized (cacheLock) {
             Subscription sub = findCachedSubscription(subscription.id);
             Subscription target = sub != null ? sub : subscription;
-            return SplitAllocator.resolveSubscriptionSplit(target, membersForLocked(target.id));
+            return SplitAllocator.resolveSubscriptionSplit(target, allMembersForLocked(target.id));
         }
     }
 
@@ -1013,7 +1211,7 @@ public final class Store {
     }
 
     private SplitAllocator.DistributionSummary distributionForLocked(Payment payment) {
-        List<Member> subMembers = membersForLocked(payment.sub.id);
+        List<Member> subMembers = allMembersForLocked(payment.sub.id);
         List<Contribution> paymentContribs = new ArrayList<>();
         for (Contribution c : contributions) {
             if (c.payment != null && c.payment.id == payment.id) {

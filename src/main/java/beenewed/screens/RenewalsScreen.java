@@ -87,12 +87,10 @@ public class RenewalsScreen extends JPanel {
         List<Subscription> list = filterRenewals(st.byRenewal(st.subscriptions), status, due, Store.today());
 
         DataTable t = new DataTable(new String[]{"Subscription", "Status", "Billing Cycle", "Next Renewal", "Expected\nAmount", "Due", "Actions"},
-                new float[]{2.2f, 1.0f, 1.1f, 1.4f, 1.2f, 1.3f, 2.4f},
+                new float[]{1.9f, 1.0f, 1.1f, 1.3f, 1.1f, 1.5f, 2.7f},
                 new int[]{DataTable.L, DataTable.L, DataTable.L, DataTable.L, DataTable.R, DataTable.L, DataTable.R}, true);
         for (Subscription s : list) {
-            UI.Btn view = UI.link("View Details");
-            view.setForeground(Theme.TEXT_2);
-            view.setFont(Theme.SMALL);
+            UI.Btn view = UI.tableAction("View Details");
             view.addActionListener(e -> App.get().openDetails(s, 0));
             UI.Btn pay = UI.primary("Record Payment", null).small();
             if (s.status == Status.CANCELLED) {
@@ -103,7 +101,7 @@ public class RenewalsScreen extends JPanel {
             }
             t.addRow(null, Common.subCell(s, false), Common.statusBadge(s.status), UI.label(s.cycle.label, Theme.BODY, Theme.MUTED),
                     UI.label(Theme.date(s.nextRenewal), Theme.BODY, Theme.TEXT),
-                    Common.money(s.price, false), Common.dueBadge(s), UI.hrow(12, view, pay));
+                    Common.money(s.price, false), Common.dueBadge(s), UI.hrow(8, view, pay));
         }
         if (list.isEmpty()) t.setEmpty("No renewals match the selected filters.");
         JLabel left = Common.footerText(list.size() + " subscription" + (list.size() == 1 ? "" : "s") + " found \u2022 Reference date: " + Theme.date(Store.today()));
@@ -180,12 +178,11 @@ public class RenewalsScreen extends JPanel {
                 .filter(p -> q.isEmpty() || p.sub.name.toLowerCase().contains(q))
                 .collect(Collectors.toList());
         DataTable t = new DataTable(new String[]{"Subscription", "Payment Date", "Amount Paid", "Renewal Period", "Payment Method", "Actions"},
-                new float[]{2.4f, 1.7f, 1.4f, 1.4f, 1.7f, 0.8f},
+                new float[]{2.3f, 1.6f, 1.4f, 1.4f, 1.7f, 1.0f},
                 new int[]{DataTable.L, DataTable.L, DataTable.R, DataTable.L, DataTable.L, DataTable.R}, true);
         double total = 0;
         for (Payment p : list) {
-            UI.Btn view = UI.link("View");
-            view.setForeground(Theme.TEXT_2);
+            UI.Btn view = UI.tableAction("View");
             view.addActionListener(e -> App.get().viewPayment(p));
             t.addRow(null, Common.subCell(p.sub, false), UI.label(Theme.date(p.date), Theme.BODY, Theme.TEXT), Common.money(p.amount, false),
                     p.period == null || p.period.isBlank() ? "\u2014" : p.period, p.method == null ? "Not specified" : p.method, view);

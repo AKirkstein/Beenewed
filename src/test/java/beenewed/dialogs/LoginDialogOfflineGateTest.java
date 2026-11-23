@@ -110,13 +110,24 @@ class LoginDialogOfflineGateTest {
         cache.save("u1", "alice@example.com", sampleSnapshot("Netflix"));
 
         SupabaseAuthService auth = new SupabaseAuthService(new SupabaseConfig("http://127.0.0.1:1", "test-key"));
+        AtomicBoolean online = new AtomicBoolean(true);
         AtomicReference<LocalSnapshotCache.CachedSnapshot> opened = new AtomicReference<>();
 
         try {
             SwingUtilities.invokeAndWait(() -> {
                 Theme.apply(false);
-                LoginDialog dialog = new LoginDialog(null, auth, () -> {}, cache, opened::set, () -> false);
+                LoginDialog dialog = new LoginDialog(null, auth, () -> {}, cache, opened::set, online::get);
                 try {
+                    // While online with a cached snapshot, Continue Offline must stay hidden
+                    dialog.checkConnectivitySyncForTest();
+                    assertFalse(dialog.isNetworkOffline());
+                    assertFalse(dialog.isOfflineContinueVisibleForTest(),
+                            "Continue Offline (Read-Only) must be hidden when online");
+                    assertFalse(dialog.isOfflineContinueEnabledForTest(),
+                            "Continue Offline (Read-Only) must be disabled when online");
+
+                    // When connectivity is lost, Continue Offline appears for the active session
+                    online.set(false);
                     dialog.checkConnectivitySyncForTest();
 
                     assertTrue(dialog.isNetworkOffline());
@@ -125,10 +136,20 @@ class LoginDialogOfflineGateTest {
                     assertEquals("Network required to sign in", dialog.getSubmitButtonTextForTest());
 
                     assertTrue(dialog.isOfflineContinueVisibleForTest(),
-                            "Active session must keep Continue Offline (Read-Only) visible");
+                            "Active session must show Continue Offline (Read-Only) when offline");
                     assertTrue(dialog.isOfflineContinueEnabledForTest(),
-                            "Active session must keep Continue Offline (Read-Only) enabled");
+                            "Active session must enable Continue Offline (Read-Only) when offline");
 
+                    // Recovering connectivity hides Continue Offline again
+                    online.set(true);
+                    dialog.checkConnectivitySyncForTest();
+                    assertFalse(dialog.isNetworkOffline());
+                    assertFalse(dialog.isOfflineContinueVisibleForTest(),
+                            "Continue Offline (Read-Only) must hide again once connectivity recovers");
+
+                    // Going offline again allows opening the active user's read-only snapshot
+                    online.set(false);
+                    dialog.checkConnectivitySyncForTest();
                     dialog.triggerOfflineOpenForTest();
                     assertTrue(dialog.isOfflineOpened(), "Active session should open read-only fallback");
                     assertNotNull(opened.get());

@@ -302,6 +302,9 @@ public final class UI {
                 setIconTextGap(6);
             }
             setBorder(kind == Kind.LINK ? new EmptyBorder(2, 2, 2, 2) : new EmptyBorder(8, 14, 8, 14));
+            if (kind == Kind.SECONDARY) {
+                putClientProperty("JButton.buttonType", "roundRect");
+            }
             addMouseListener(new MouseAdapter() {
                 public void mouseEntered(MouseEvent e) { hover = true; repaint(); }
                 public void mouseExited(MouseEvent e)  { hover = false; repaint(); }
@@ -323,8 +326,15 @@ public final class UI {
                 case PRIMARY -> { g.setColor(!on ? Theme.BORDER_STRONG : hover ? Theme.PRIMARY_HOVER : Theme.PRIMARY); g.fill(r); }
                 case DANGER  -> { g.setColor(hover ? Theme.RED_HOVER : Theme.RED_DARK); g.fill(r); }
                 case SECONDARY -> {
-                    g.setColor(hover ? Theme.SUBTLE : Theme.SURFACE); g.fill(r);
-                    g.setColor(Theme.BORDER_STRONG); g.draw(r);
+                    boolean pressed = on && getModel().isPressed();
+                    Color fill = !on ? Theme.SUBTLE
+                            : pressed ? Theme.PRIMARY_LIGHT
+                            : hover ? (Theme.isDark() ? Theme.BORDER : Theme.SUBTLE)
+                            : (Theme.isDark() ? Theme.ELEVATED : Theme.SURFACE);
+                    g.setColor(fill);
+                    g.fill(r);
+                    g.setColor(pressed || hover ? Theme.PRIMARY : Theme.BORDER_STRONG);
+                    g.draw(r);
                 }
                 case GHOST -> { if (hover) { g.setColor(Theme.SUBTLE); g.fill(r); } }
                 case SOFT  -> { g.setColor(hover ? Theme.SOFT_HOVER : Theme.PRIMARY_LIGHT); g.fill(r); }
@@ -346,6 +356,20 @@ public final class UI {
     public static Btn ghost(String t, Icons.Type i)     { return new Btn(t, i, Kind.GHOST); }
     public static Btn link(String t)                    { return new Btn(t, null, Kind.LINK); }
     public static Btn soft(String t, Icons.Type i)      { return new Btn(t, i, Kind.SOFT); }
+
+    /**
+     * Compact boxed action button for table "Actions" columns (e.g., "View", "View Details", "Edit", "Mark Paid").
+     * Renders with a visible outlined button box, consistent padding, and theme-aware hover/pressed colors.
+     */
+    public static Btn tableAction(String text) {
+        Btn b = new Btn(text, null, Kind.SECONDARY);
+        b.setFont(Theme.SMALL_B);
+        b.setForeground(Theme.TEXT);
+        b.setMargin(new Insets(4, 12, 4, 12));
+        b.setBorder(new EmptyBorder(4, 12, 4, 12));
+        b.putClientProperty("JButton.buttonType", "roundRect");
+        return b;
+    }
 
     public static Btn iconButton(Icons.Type t, Runnable action) {
         Btn b = new Btn(null, null, Kind.GHOST);
@@ -422,7 +446,8 @@ public final class UI {
         Graphics2D g = (Graphics2D) g0.create();
         aa(g);
         boolean err = Boolean.TRUE.equals(c.getClientProperty("error"));
-        g.setColor(!c.isEnabled() ? Theme.SUBTLE : err ? Theme.RED_BG : Theme.FIELD_BG);
+        boolean readOnly = !c.isEnabled() || (c instanceof javax.swing.text.JTextComponent tc && !tc.isEditable());
+        g.setColor(err ? Theme.RED_BG : readOnly ? Theme.SUBTLE : Theme.FIELD_BG);
         g.fill(new RoundRectangle2D.Double(0, 0, c.getWidth() - 1, c.getHeight() - 1, 8, 8));
         g.dispose();
     }

@@ -190,6 +190,21 @@ public final class BillingRules {
     }
 
     /**
+     * Validates that a recorded payment date is present and not set in the future beyond {@code today}.
+     * Late payments for past/overdue renewal dates are allowed as long as {@code paymentDate <= today}.
+     */
+    public static void validatePaymentDate(LocalDate paymentDate, LocalDate today) {
+        if (paymentDate == null) {
+            throw new ValidationException("Payment date is required.");
+        }
+        LocalDate referenceToday = today != null ? today : LocalDate.now();
+        if (paymentDate.isAfter(referenceToday)) {
+            throw new ValidationException("Payment date (" + paymentDate
+                    + ") cannot be in the future (must be on or before " + referenceToday + ").");
+        }
+    }
+
+    /**
      * Validates that a recorded payment amount aligns with the subscription's current price
      * or one of its designated split shares (at 2-decimal peso precision).
      */

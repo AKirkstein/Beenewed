@@ -266,12 +266,12 @@ public final class LoginDialog extends JDialog {
         JPanel submitWrap = wrapSection(submitBtn, 10);
         submitWrap.setBorder(new EmptyBorder(6, 0, 10, 0));
 
-        // Offline read-only fallback button (visible on Sign In only when an active local session exists)
+        // Offline read-only fallback button (visible on Sign In only when offline AND an active local session exists)
         offlineBtn.setMaximumSize(new Dimension(Integer.MAX_VALUE, 38));
         offlineBtn.setPreferredSize(new Dimension(DIALOG_WIDTH - 100, 38));
         offlineBtn.addActionListener(e -> openOfflineCache());
         offlineWrap = wrapSection(offlineBtn, 10);
-        offlineWrap.setVisible(hasActiveOfflineSession());
+        offlineWrap.setVisible(false);
 
         // Resend code button (Verify Email mode only)
         resendBtn.setMaximumSize(new Dimension(Integer.MAX_VALUE, 38));
@@ -363,7 +363,7 @@ public final class LoginDialog extends JDialog {
     }
 
     private void openOfflineCache() {
-        if (busy || localCache == null || onOfflineOpen == null) {
+        if (busy || !networkOffline || localCache == null || onOfflineOpen == null) {
             return;
         }
         Optional<LocalSnapshotCache.CachedSnapshot> snap = localCache.loadActiveSessionSnapshot();
@@ -561,8 +561,9 @@ public final class LoginDialog extends JDialog {
             offlineNoticeText.setSize(new Dimension(DIALOG_WIDTH - 210, Short.MAX_VALUE));
         }
 
-        offlineWrap.setVisible(isSignIn && activeOffline);
-        if (activeOffline) {
+        boolean canContinueOffline = networkOffline && activeOffline;
+        offlineWrap.setVisible(isSignIn && canContinueOffline);
+        if (canContinueOffline) {
             offlineBtn.setToolTipText("View cached read-only data for " + activeSnapshot.get().email());
         } else {
             offlineBtn.setToolTipText(null);
@@ -576,7 +577,7 @@ public final class LoginDialog extends JDialog {
             case VERIFY_OTP -> "Back to Sign In";
         });
 
-        applyInteractiveState(activeOffline);
+        applyInteractiveState(canContinueOffline);
     }
 
     private String defaultSubmitLabel() {
@@ -610,7 +611,7 @@ public final class LoginDialog extends JDialog {
             submitBtn.setText(networkOffline ? offlineSubmitLabel() : defaultSubmitLabel());
         }
         resendBtn.setEnabled(formEnabled);
-        offlineBtn.setEnabled(!busy && activeOffline);
+        offlineBtn.setEnabled(!busy && networkOffline && activeOffline);
         retryConnectBtn.setEnabled(!busy && !checkingConnectivity);
     }
 

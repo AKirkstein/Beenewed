@@ -55,7 +55,7 @@ public class RemindersDialog extends BaseDialog {
         p.add(UI.iconBox(s.icon, 34, 17), BorderLayout.WEST);
         p.add(UI.vstack(3, UI.label(s.name, Theme.BODY_B, Theme.TEXT),
                 UI.label("Renews " + Theme.date(s.nextRenewal) + "  \u2022  Expected " + Theme.peso(s.price) + "  \u2022  " + s.cycle.label, Theme.SMALL, Theme.MUTED)), BorderLayout.CENTER);
-        UI.Btn view = UI.link("View");
+        UI.Btn view = UI.tableAction("View");
         view.addActionListener(e -> {
             Store.get().markReminderViewed(s, kind);
             Store.get().changed();

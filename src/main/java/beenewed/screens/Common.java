@@ -37,14 +37,25 @@ public final class Common {
         };
     }
 
-    /** "In 3 days" style badge: orange inside the reminder window, red when overdue, grey otherwise. */
+    /** "In 3 days" style badge: orange inside the reminder window, red when overdue (if enabled), neutral otherwise. */
     public static UI.Pill dueBadge(LocalDate d) {
+        Store st = Store.get();
+        return dueBadge(d, st.remindDays, st.showOverdue);
+    }
+
+    /** Evaluates due badge styling for explicit reminder lead days and overdue-highlight preference. */
+    public static UI.Pill dueBadge(LocalDate d, int reminderWindowDays, boolean showOverdue) {
         long days = Store.daysUntil(d);
-        int window = Store.get().remindDays;
-        if (days < 0) return UI.badge("Overdue " + (-days) + (days == -1 ? " day" : " days"), Theme.RED, Theme.RED_BG);
+        if (days < 0) {
+            if (!showOverdue) {
+                String past = (-days) + (days == -1 ? " day ago" : " days ago");
+                return new UI.Pill(past, Theme.MUTED, Theme.SUBTLE, Theme.PLACEHOLDER, 999);
+            }
+            return UI.badge("Overdue " + (-days) + (days == -1 ? " day" : " days"), Theme.RED, Theme.RED_BG);
+        }
         if (days == 0) return UI.badge("Due today", Theme.ORANGE, Theme.ORANGE_BG);
         String t = "In " + days + (days == 1 ? " day" : " days");
-        if (days <= window) return UI.badge(t, Theme.ORANGE, Theme.ORANGE_BG);
+        if (days <= reminderWindowDays) return UI.badge(t, Theme.ORANGE, Theme.ORANGE_BG);
         return new UI.Pill(t, Theme.MUTED, Theme.SUBTLE, Theme.PLACEHOLDER, 999);
     }
 

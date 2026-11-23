@@ -108,10 +108,14 @@ public class PaymentDialog extends BaseDialog {
         sharedRowWrap.setVisible(false);
         place(sharedRowWrap);
 
-        fDate = new Field("Payment Date", true, null, date, "The date the payment was actually completed.");
+        fDate = new Field("Payment Date", true, null, date, "The date the payment was completed (cannot be in the future).");
         fAmount = new Field("Amount Paid", true, null, amount, "Must match the subscription price or designated split share.");
         place(pair(fDate, fAmount)); gap(10);
-        fPeriod = new Field("Renewal Period", true, null, period, "One payment is allowed per subscription per billing period.");
+        period.setEditable(false);
+        period.setFocusable(false);
+        period.setForeground(Theme.TEXT_2);
+        period.setCursor(Cursor.getDefaultCursor());
+        fPeriod = new Field("Renewal Period", true, null, period, "Auto-computed from the subscription's renewal date (read-only).");
         Field fMethod = new Field("Payment Method", false, "(Optional)", method, " ");
         place(pair(fPeriod, fMethod)); gap(10);
         place(new Field("Notes / Reference", false, "(Optional)", notes, null)); gap(12);
@@ -174,6 +178,7 @@ public class PaymentDialog extends BaseDialog {
         } else {
             if (preset != null) sub.setSelectedItem(preset);
             else if (sub.getItemCount() > 0) sub.setSelectedIndex(0);
+            date.setMaxDate(Store.today());
             date.setDate(Store.today());
             syncFromSelectedSubscription();
         }
@@ -188,11 +193,16 @@ public class PaymentDialog extends BaseDialog {
         updatingControls = true;
         try {
             amount.setText(BillingRules.money(s.price).toPlainString());
-            period.setText(BillingRules.defaultPeriodLabel(s.nextRenewal, s.cycle));
+            String autoPeriod = BillingRules.defaultPeriodLabel(s.nextRenewal, s.cycle);
+            period.setText(autoPeriod);
             populateSharedControls(s, null);
             fSub.error(null);
             fAmount.error(null);
-            fPeriod.error(null);
+            if (BillingRules.findDuplicatePayment(s, autoPeriod, Store.get().payments).isPresent()) {
+                fPeriod.error("A payment for " + s.name + " in \"" + autoPeriod + "\" already exists.");
+            } else {
+                fPeriod.error(null);
+            }
         } finally {
             updatingControls = false;
         }
@@ -276,8 +286,21 @@ public class PaymentDialog extends BaseDialog {
         }
 
         LocalDate d = date.getDate();
-        fDate.error(date.isBlank() ? "Payment date is required." : d == null ? "Enter a valid date (MM/dd/yyyy or yyyy-MM-dd)." : null);
-        ok &= d != null;
+        if (date.isBlank()) {
+            fDate.error("Payment date is required.");
+            ok = false;
+        } else if (d == null) {
+            fDate.error("Enter a valid date (MM/dd/yyyy or yyyy-MM-dd).");
+            ok = false;
+        } else {
+            try {
+                BillingRules.validatePaymentDate(d, Store.today());
+                fDate.error(null);
+            } catch (ValidationException ex) {
+                fDate.error(ex.getMessage());
+                ok = false;
+            }
+        }
 
         BigDecimal a = parsePositiveAmount(amount.getText());
         if (a == null) {
@@ -299,7 +322,10 @@ public class PaymentDialog extends BaseDialog {
             fAmount.error(null);
         }
 
-        String per = period.getText().trim();
+        String per = selectedSub != null
+                ? BillingRules.defaultPeriodLabel(selectedSub.nextRenewal, selectedSub.cycle)
+                : period.getText().trim();
+        period.setText(per);
         if (per.isEmpty()) {
             fPeriod.error("Renewal period is required.");
             ok = false;

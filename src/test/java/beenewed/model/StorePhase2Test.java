@@ -41,12 +41,14 @@ class StorePhase2Test {
     private HttpServer server;
     private SupabaseAuthService auth;
     private final AtomicLong nextPaymentId = new AtomicLong(100);
+    private final AtomicLong nextMemberId = new AtomicLong(20);
     private final AtomicLong nextContribId = new AtomicLong(500);
     private final List<String> httpLog = new CopyOnWriteArrayList<>();
 
     private volatile LocalDate sub1NextRenewal;
     private volatile String member1Notes = null;
     private volatile String member2Notes = null;
+    private volatile boolean sawExplicitNullRoleNotes = false;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -80,6 +82,12 @@ class StorePhase2Test {
         Subscription netflix = st.getSubscription(1);
         LocalDate originalDue = netflix.nextRenewal;
         assertEquals(1, st.overdue().size(), "Overdue subscription should appear before payment");
+
+        // Future payment date is rejected before hitting Supabase
+        Payment futureDate = new Payment(0, netflix, Store.today().plusDays(1), 549.00, "November 2026", "GCash", null);
+        ValidationException futureErr = assertThrows(ValidationException.class, () -> st.recordPayment(futureDate));
+        assertTrue(futureErr.getMessage().toLowerCase().contains("future"));
+        assertTrue(httpLog.isEmpty(), "Future payment date must not send HTTP requests");
 
         // Mismatched amount rejected before hitting Supabase
         Payment wrongAmount = new Payment(0, netflix, Store.today(), 100.00, "Current Cycle", "GCash", null);
@@ -147,9 +155,18 @@ class StorePhase2Test {
         assertEquals(new BigDecimal("0.00"), before.totalCollected());
         assertEquals(new BigDecimal("300.00"), before.totalPending());
 
-        // Ana pays her share -> Collected = 150, Pending = 150
+        // Ana cannot contribute more than her assigned share (150.00)
         Member ana = st.membersFor(netflix).stream().filter(m -> m.id == 10).findFirst().orElseThrow();
+        ValidationException overShareErr = assertThrows(ValidationException.class,
+                () -> st.recordContribution(new Contribution(0, netflix, ana, recorded, 150.01, Store.today())));
+        assertTrue(overShareErr.getMessage().toLowerCase().contains("exceeds"));
+
+        // Ana pays her share -> Collected = 150, Pending = 150
         st.recordContribution(new Contribution(0, netflix, ana, recorded, 150.00, Store.today()));
+
+        // Ana cannot contribute again once her assigned share is settled
+        assertThrows(ValidationException.class,
+                () -> st.recordContribution(new Contribution(0, netflix, ana, recorded, 1.00, Store.today())));
 
         DistributionSummary after = st.distributionFor(recorded);
         assertEquals(new BigDecimal("150.00"), after.totalCollected());
@@ -161,6 +178,51 @@ class StorePhase2Test {
         // Recording next period using owner's designated split share (249.00) is also accepted
         assertDoesNotThrow(() -> st.recordPayment(
                 new Payment(0, netflix, Store.today(), 249.00, "December 2026", "GCash", null)));
+    }
+
+    @Test
+    void primaryPayerTransferPersistsNullDemotionAndAccountOwnerCanBeMarkedPaid() {
+        Store st = Store.get();
+        Subscription netflix = st.getSubscription(1); // 549.00, equal 3-way split = 183.00 each
+        Member ana = st.membersFor(netflix).stream().filter(m -> m.id == 10).findFirst().orElseThrow();
+        Member ben = st.membersFor(netflix).stream().filter(m -> m.id == 11).findFirst().orElseThrow();
+
+        // 1. Designate Ana as Primary Payer
+        String anaPayerNotes = SplitAllocator.encodeMemberNotes(null,
+                new SplitAllocator.MemberSplitMeta(true, null, true, SplitMode.EQUAL));
+        st.updateMember(new Member(ana.id, netflix, ana.name, anaPayerNotes));
+        assertEquals(SplitAllocator.memberKey(ana.id), st.splitConfigFor(netflix).payerKey());
+
+        // 2. Transfer Primary Payer from Ana -> Ben; Ana's role_notes must be explicitly patched to null
+        sawExplicitNullRoleNotes = false;
+        String benPayerNotes = SplitAllocator.encodeMemberNotes(null,
+                new SplitAllocator.MemberSplitMeta(true, null, true, SplitMode.EQUAL));
+        st.updateMember(new Member(ben.id, netflix, ben.name, benPayerNotes));
+        assertTrue(sawExplicitNullRoleNotes, "Demoting previous primary payer must explicitly send role_notes: null");
+        assertNull(member1Notes, "Previous primary payer role_notes must be cleared in backend");
+        assertEquals(SplitAllocator.memberKey(ben.id), st.splitConfigFor(netflix).payerKey());
+
+        // 3. Record full payment with Ben as Primary Payer -> Account Owner starts Pending (183.00)
+        st.recordPayment(new Payment(0, netflix, Store.today(), 549.00, "November 2026", "GCash", null));
+        Payment recorded = st.paymentsFor(netflix).get(0);
+        DistributionSummary before = st.distributionFor(recorded);
+        assertEquals(SplitAllocator.memberKey(ben.id), before.payerKey());
+        assertEquals(SettlementStatus.PENDING, before.rows().get(0).status());
+        assertEquals(new BigDecimal("183.00"), before.rows().get(0).pendingAmount());
+
+        // 4. Account Owner cannot exceed assigned share (183.00)
+        SplitAllocator.Participant owner = before.rows().get(0).participant();
+        assertTrue(owner.owner());
+        assertThrows(ValidationException.class,
+                () -> st.recordParticipantContribution(netflix, owner, recorded, 200.00, Store.today()));
+
+        // 5. Account Owner pays their 183.00 share -> recognized, persisted, and marked PAID
+        st.recordParticipantContribution(netflix, owner, recorded, 183.00, Store.today());
+        assertEquals(2, st.membersFor(netflix).size(), "Internal owner record must not duplicate regular shared members");
+        DistributionSummary after = st.distributionFor(recorded);
+        assertEquals(SettlementStatus.PAID, after.rows().get(0).status());
+        assertEquals(new BigDecimal("0.00"), after.rows().get(0).pendingAmount());
+        assertEquals(new BigDecimal("183.00"), after.totalCollected());
     }
 
     private void handle(HttpExchange ex) throws IOException {
@@ -197,14 +259,27 @@ class StorePhase2Test {
                     + memberJson(10, 1, "Ana", member1Notes) + ","
                     + memberJson(11, 1, "Ben", member2Notes)
                     + "]";
+        } else if (path.equals("/rest/v1/members") && method.equals("POST")) {
+            JsonObject obj = JsonParser.parseString(reqBody).getAsJsonObject();
+            long id = nextMemberId.getAndIncrement();
+            String name = obj.get("name").getAsString();
+            String notes = obj.has("role_notes") && !obj.get("role_notes").isJsonNull() ? obj.get("role_notes").getAsString() : null;
+            resp = "[" + memberJson((int) id, obj.get("subscription_id").getAsInt(), name, notes) + "]";
         } else if (path.equals("/rest/v1/members") && method.equals("PATCH")) {
             JsonObject obj = JsonParser.parseString(reqBody).getAsJsonObject();
-            String notes = obj.has("role_notes") && !obj.get("role_notes").isJsonNull() ? obj.get("role_notes").getAsString() : null;
+            boolean hasRoleNotes = obj.has("role_notes");
+            if (hasRoleNotes && obj.get("role_notes").isJsonNull()) {
+                sawExplicitNullRoleNotes = true;
+            }
             if (query != null && query.contains("id=eq.10")) {
-                member1Notes = notes;
+                if (hasRoleNotes) {
+                    member1Notes = obj.get("role_notes").isJsonNull() ? null : obj.get("role_notes").getAsString();
+                }
                 resp = "[" + memberJson(10, 1, "Ana", member1Notes) + "]";
             } else {
-                member2Notes = notes;
+                if (hasRoleNotes) {
+                    member2Notes = obj.get("role_notes").isJsonNull() ? null : obj.get("role_notes").getAsString();
+                }
                 resp = "[" + memberJson(11, 1, "Ben", member2Notes) + "]";
             }
         } else if (path.equals("/rest/v1/payments") && method.equals("POST")) {

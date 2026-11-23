@@ -185,8 +185,7 @@ public class DetailsScreen extends JPanel {
         List<Payment> pays = Store.get().paymentsFor(sub);
         double total = 0;
         for (Payment p : pays) {
-            UI.Btn view = UI.link("View");
-            view.setForeground(Theme.TEXT_2);
+            UI.Btn view = UI.tableAction("View");
             view.addActionListener(e -> App.get().viewPayment(p));
             t.addRow(null, UI.label(Theme.date(p.date), Theme.BODY_B, Theme.TEXT), Common.money(p.amount, true),
                     blank(p.period), p.method == null ? "Not specified" : p.method, view);
@@ -221,7 +220,7 @@ public class DetailsScreen extends JPanel {
         members.add(mh, BorderLayout.NORTH);
 
         DataTable mt = new DataTable(new String[]{"Member Name", "Role", "Assigned Share", "Notes", "Actions"},
-                new float[]{2.0f, 1.3f, 1.3f, 2.2f, 0.8f},
+                new float[]{1.9f, 1.3f, 1.3f, 2.1f, 1.0f},
                 new int[]{DataTable.L, DataTable.L, DataTable.R, DataTable.L, DataTable.R}, false);
         for (Member m : ms) {
             String key = SplitAllocator.memberKey(m.id);
@@ -234,7 +233,7 @@ public class DetailsScreen extends JPanel {
             UI.Pill roleBadge = isPayer
                     ? UI.badge("Primary Payer", Theme.ACCENT, Theme.PRIMARY_LIGHT)
                     : new UI.Pill("Member", Theme.TEXT_2, Theme.SUBTLE, Theme.BORDER, 999);
-            UI.Btn edit = UI.link("Edit");
+            UI.Btn edit = UI.tableAction("Edit");
             edit.addActionListener(e -> new MemberDialog(App.get(), sub, m).open());
             mt.addRow(null, UI.label(m.name, Theme.BODY_B, Theme.TEXT), roleBadge,
                     Common.money(share.doubleValue(), false), blank(SplitAllocator.cleanNotes(m.notes)), edit);
@@ -261,13 +260,14 @@ public class DetailsScreen extends JPanel {
         ch.setBorder(new EmptyBorder(16, 16, 0, 16));
         contrib.add(ch, BorderLayout.NORTH);
         DataTable ct = new DataTable(new String[]{"Date Received", "Member", "Linked Payment", "Amount Received", "Actions"},
-                new float[]{1.6f, 1.6f, 2.8f, 1.8f, 0.9f}, new int[]{DataTable.L, DataTable.L, DataTable.L, DataTable.R, DataTable.R}, false);
+                new float[]{1.5f, 1.6f, 2.7f, 1.8f, 1.0f}, new int[]{DataTable.L, DataTable.L, DataTable.L, DataTable.R, DataTable.R}, false);
         List<Contribution> cs = st.contributionsFor(sub);
         double total = 0;
         for (Contribution c : cs) {
-            UI.Btn edit = UI.link("Edit");
+            UI.Btn edit = UI.tableAction("Edit");
             edit.addActionListener(e -> new ContributionDialog(App.get(), sub, c).open());
-            ct.addRow(null, Theme.date(c.date), UI.label(c.member.name, Theme.BODY_B, Theme.TEXT),
+            String contributorName = SplitAllocator.isOwnerMember(c.member) ? SplitAllocator.OWNER_LABEL : c.member.name;
+            ct.addRow(null, Theme.date(c.date), UI.label(contributorName, Theme.BODY_B, Theme.TEXT),
                     c.payment == null ? "\u2014" : c.payment.toString(), Common.money(c.amount, true), edit);
             total += c.amount;
         }
@@ -348,7 +348,7 @@ public class DetailsScreen extends JPanel {
 
         DataTable dt = new DataTable(
                 new String[]{"Participant", "Expected Share", "Paid", "Pending", "Status", "Action"},
-                new float[]{2.0f, 1.3f, 1.2f, 1.2f, 1.3f, 1.1f},
+                new float[]{1.9f, 1.3f, 1.2f, 1.2f, 1.2f, 1.3f},
                 new int[]{DataTable.L, DataTable.R, DataTable.R, DataTable.R, DataTable.L, DataTable.R}, false);
 
         for (SplitAllocator.DistributionRow row : summary.rows()) {
@@ -359,10 +359,10 @@ public class DetailsScreen extends JPanel {
                 case PENDING -> UI.badge("Pending", Theme.RED, Theme.RED_BG);
             };
             JComponent action;
-            if (!row.participant().owner() && row.participant().member() != null && row.pendingAmount().signum() > 0) {
-                UI.Btn markPaid = UI.link("Mark Paid");
+            if (row.status() != SplitAllocator.SettlementStatus.PAYER && row.pendingAmount().signum() > 0) {
+                UI.Btn markPaid = UI.tableAction("Mark Paid");
                 markPaid.addActionListener(e -> new ContributionDialog(
-                        App.get(), sub, row.participant().member(), targetPayment, row.pendingAmount()).open());
+                        App.get(), sub, row.participant(), targetPayment, row.pendingAmount()).open());
                 action = markPaid;
             } else {
                 action = UI.label("Settled", Theme.SMALL, Theme.MUTED);
@@ -423,10 +423,10 @@ public class DetailsScreen extends JPanel {
         strip.add(UI.vstack(3, UI.muted("Utilization"), badgeWrap));
 
         DataTable t = new DataTable(new String[]{"Usage Date", "Quantity", "Unit", "Notes", "Actions"},
-                new float[]{1.8f, 1.2f, 1.3f, 3.4f, 0.9f}, new int[]{DataTable.L, DataTable.R, DataTable.L, DataTable.L, DataTable.R}, false);
+                new float[]{1.8f, 1.2f, 1.3f, 3.3f, 1.0f}, new int[]{DataTable.L, DataTable.R, DataTable.L, DataTable.L, DataTable.R}, false);
         List<Usage> us = Store.get().usagesFor(sub);
         for (Usage u : us) {
-            UI.Btn edit = UI.link("Edit");
+            UI.Btn edit = UI.tableAction("Edit");
             edit.addActionListener(e -> new UsageDialog(App.get(), sub, u).open());
             String qty = u.quantity == null ? null : (u.quantity == Math.floor(u.quantity) ? String.valueOf(u.quantity.longValue()) : String.valueOf(u.quantity));
             t.addRow(null, UI.label(Theme.date(u.date), Theme.BODY, Theme.TEXT), blank(qty), blank(u.unit), blank(u.notes), edit);

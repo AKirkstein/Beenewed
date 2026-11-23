@@ -141,4 +141,37 @@ class SplitAllocatorTest {
         assertFalse(decoded.splitShareOnly());
         assertEquals(snap, decoded.shareSnapshot());
     }
+
+    @Test
+    void accountOwnerContributionIsTrackedWhenMemberIsPrimaryPayer() {
+        Subscription sub = familyPlan(600.00);
+        Member ana = new Member(21, sub, "Ana",
+                SplitAllocator.encodeMemberNotes(null, new MemberSplitMeta(true, null, true, SplitMode.EQUAL)));
+        Member ben = new Member(22, sub, "Ben", null);
+        Member ownerRec = new Member(23, sub, SplitAllocator.OWNER_LABEL, SplitAllocator.encodeOwnerMemberNotes());
+
+        // Owner record must not be double-counted as a 4th participant
+        SplitConfig config = SplitAllocator.resolveSubscriptionSplit(sub, List.of(ana, ben, ownerRec));
+        assertEquals(3, config.shares().size());
+        assertEquals(SplitAllocator.memberKey(21), config.payerKey());
+
+        Payment payment = new Payment(200, sub, LocalDate.of(2026, 11, 23), 600.00, "November 2026", "GCash",
+                SplitAllocator.encodePaymentNotes(null, new PaymentSplitMeta(SplitAllocator.memberKey(21), false, Map.of())));
+
+        // Before owner pays: Account Owner is Pending (200.00)
+        DistributionSummary before = SplitAllocator.computeDistribution(payment, List.of(ana, ben, ownerRec), List.of());
+        assertEquals(SettlementStatus.PENDING, before.rows().get(0).status());
+        assertEquals(new BigDecimal("200.00"), before.rows().get(0).pendingAmount());
+
+        // Owner pays 100.00 -> Partial; then remaining 100.00 -> Paid
+        Contribution ownerPart1 = new Contribution(1, sub, ownerRec, payment, 100.00, LocalDate.of(2026, 11, 23));
+        DistributionSummary partial = SplitAllocator.computeDistribution(payment, List.of(ana, ben, ownerRec), List.of(ownerPart1));
+        assertEquals(SettlementStatus.PARTIAL, partial.rows().get(0).status());
+        assertEquals(new BigDecimal("100.00"), partial.rows().get(0).pendingAmount());
+
+        Contribution ownerPart2 = new Contribution(2, sub, ownerRec, payment, 100.00, LocalDate.of(2026, 11, 23));
+        DistributionSummary paid = SplitAllocator.computeDistribution(payment, List.of(ana, ben, ownerRec), List.of(ownerPart1, ownerPart2));
+        assertEquals(SettlementStatus.PAID, paid.rows().get(0).status());
+        assertEquals(new BigDecimal("0.00"), paid.rows().get(0).pendingAmount());
+    }
 }

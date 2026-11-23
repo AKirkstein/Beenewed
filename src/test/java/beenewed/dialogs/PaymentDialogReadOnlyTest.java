@@ -119,6 +119,18 @@ class PaymentDialogReadOnlyTest {
 
                 PaymentDialog newPayDialog = new PaymentDialog(frame, sub);
                 try {
+                    // Renewal Period text field must be strictly non-editable even in creation mode
+                    List<JTextField> newPayFields = collectAll(newPayDialog.body).stream()
+                            .filter(JTextField.class::isInstance)
+                            .map(JTextField.class::cast)
+                            .toList();
+                    JTextField periodField = newPayFields.stream()
+                            .filter(tf -> "December 2026".equals(tf.getText()))
+                            .findFirst()
+                            .orElseThrow(() -> new AssertionError("Expected auto-computed Renewal Period field"));
+                    assertFalse(periodField.isEditable(), "Renewal Period must be strictly read-only during payment creation");
+                    assertFalse(periodField.isFocusable(), "Renewal Period must not be focusable during payment creation");
+
                     // Replace date with impossible calendar date 02/30/2026 -> must reject cleanly
                     for (Component c : collectAll(newPayDialog.body)) {
                         if (c instanceof DateField payDf && payDf.getComponent(0) instanceof JTextField tf) {
@@ -126,6 +138,14 @@ class PaymentDialogReadOnlyTest {
                         }
                     }
                     assertNull(newPayDialog.prepareSave(), "Malformed date 02/30/2026 must fail inline validation");
+
+                    // Replace date with a future date beyond today -> must reject cleanly
+                    for (Component c : collectAll(newPayDialog.body)) {
+                        if (c instanceof DateField payDf) {
+                            payDf.setDate(Store.today().plusDays(5));
+                        }
+                    }
+                    assertNull(newPayDialog.prepareSave(), "Future payment date must fail inline validation");
                 } finally {
                     newPayDialog.dispose();
                 }

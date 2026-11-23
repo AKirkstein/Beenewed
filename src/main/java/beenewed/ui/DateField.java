@@ -17,6 +17,7 @@ public class DateField extends JPanel {
     private final JButton cal;
     private final JPopupMenu popup = new JPopupMenu();
     private YearMonth shown = YearMonth.now();
+    private LocalDate maxDate;
 
     public DateField(String placeholder) {
         super(new BorderLayout());
@@ -66,6 +67,8 @@ public class DateField extends JPanel {
     @Override protected void paintComponent(Graphics g) { UI.paintFieldBg(this, g); super.paintComponent(g); }
 
     public void setDate(LocalDate d) { field.setText(d == null ? "" : Theme.INPUT_DATE.format(d)); }
+    public void setMaxDate(LocalDate maxDate) { this.maxDate = maxDate; }
+    public LocalDate getMaxDate() { return maxDate; }
     public boolean isBlank() { return field.getText().isBlank(); }
 
     /** Strictly parses mm/dd/yyyy, m/d/yyyy, or yyyy-mm-dd; returns null when blank or invalid. */
@@ -115,12 +118,18 @@ public class DateField extends JPanel {
             b.setFocusPainted(false);
             b.setBorder(new EmptyBorder(5, 7, 5, 7));
             boolean isSel = date.equals(sel);
-            b.setBackground(isSel ? Theme.PRIMARY : date.equals(today) ? Theme.PRIMARY_LIGHT : Theme.ELEVATED);
-            b.setForeground(isSel ? Theme.ON_PRIMARY : Theme.TEXT);
+            boolean blocked = maxDate != null && date.isAfter(maxDate);
+            b.setBackground(isSel ? Theme.PRIMARY : (!blocked && date.equals(today)) ? Theme.PRIMARY_LIGHT : Theme.ELEVATED);
+            b.setForeground(blocked ? Theme.PLACEHOLDER : isSel ? Theme.ON_PRIMARY : Theme.TEXT);
             b.setOpaque(true);
             b.setBorderPainted(false);
-            b.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-            b.addActionListener(e -> { setDate(date); popup.setVisible(false); field.requestFocusInWindow(); });
+            if (blocked) {
+                b.setEnabled(false);
+                b.setCursor(Cursor.getDefaultCursor());
+            } else {
+                b.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+                b.addActionListener(e -> { setDate(date); popup.setVisible(false); field.requestFocusInWindow(); });
+            }
             grid.add(b);
         }
         p.add(grid, BorderLayout.CENTER);
