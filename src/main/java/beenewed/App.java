@@ -505,6 +505,7 @@ public class App extends JFrame {
 
     public void openDetails(Subscription s, int tab) { details.setSubscription(s, tab); show(Screen.DETAILS); }
     public void openRenewals(int tab) { renewals.selectTab(tab); show(Screen.RENEWALS); }
+    public void openReports(int tab) { reports.selectBasis(tab); show(Screen.REPORTS); }
 
     // ---- Dialog shortcuts ---------------------------------------------
     public void addSubscription()                    { new SubscriptionDialog(this, null).open(); }

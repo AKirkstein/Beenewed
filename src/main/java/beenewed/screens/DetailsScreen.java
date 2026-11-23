@@ -409,6 +409,19 @@ public class DetailsScreen extends JPanel {
         UI.Btn rec = UI.primary("Record Usage", Icons.Type.PLUS);
         rec.addActionListener(e -> new UsageDialog(App.get(), sub, null).open());
         UI.RoundPanel card = tabCard(Icons.Type.HISTORY, "Usage History", "Record and review how you use this subscription.", rec);
+
+        beenewed.model.AnalyticsEngine.UsageEfficiency eff = Store.get().usageEfficiencyFor(sub);
+        UI.RoundPanel strip = new UI.RoundPanel(new GridLayout(1, 4, 12, 0), 8, Theme.SUBTLE, null);
+        strip.setBorder(new EmptyBorder(12, 14, 12, 14));
+        strip.add(UI.vstack(3, UI.muted("Cost / Day"), UI.label(Theme.peso(eff.costPerDay().doubleValue()), Theme.BODY_B, Theme.TEXT)));
+        strip.add(UI.vstack(3, UI.muted("Logged Uses (30d)"), UI.label(String.valueOf(eff.usesInWindow()), Theme.BODY_B, Theme.TEXT)));
+        strip.add(UI.vstack(3, UI.muted("Cost / Use"), UI.label(
+                eff.costPerUse() == null ? "No usage" : Theme.peso(eff.costPerUse().doubleValue()),
+                Theme.BODY_B, eff.costPerUse() == null ? Theme.RED : Theme.TEXT)));
+        JPanel badgeWrap = UI.clear(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        badgeWrap.add(Common.utilizationBadge(eff.level()));
+        strip.add(UI.vstack(3, UI.muted("Utilization"), badgeWrap));
+
         DataTable t = new DataTable(new String[]{"Usage Date", "Quantity", "Unit", "Notes", "Actions"},
                 new float[]{1.8f, 1.2f, 1.3f, 3.4f, 0.9f}, new int[]{DataTable.L, DataTable.R, DataTable.L, DataTable.L, DataTable.R}, false);
         List<Usage> us = Store.get().usagesFor(sub);
@@ -420,9 +433,9 @@ public class DetailsScreen extends JPanel {
         }
         if (us.isEmpty()) t.setEmpty("No usage recorded yet.");
         t.setFooter(Common.footerText(us.size() + (us.size() == 1 ? " usage entry recorded" : " usage entries recorded")), null);
-        card.add(t, BorderLayout.CENTER);
+        card.add(UI.vstack(12, strip, t), BorderLayout.CENTER);
         card.add(UI.note(Icons.Type.INFO, Theme.INFO_BG, Theme.ACCENT, "About Usage Tracking",
-                "Usage entries are recorded manually. Review your history to help decide whether this subscription is still useful to you.", 640), BorderLayout.SOUTH);
+                "Usage entries are recorded manually. Cost / Use and Utilization evaluate logged activity over the last 30 days to help spot underutilized subscriptions.", 640), BorderLayout.SOUTH);
         return card;
     }
 

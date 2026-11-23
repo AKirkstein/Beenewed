@@ -2,6 +2,7 @@ package beenewed.screens;
 
 import beenewed.App;
 import beenewed.model.BillingRules;
+import beenewed.model.CsvExporter;
 import beenewed.model.Models.*;
 import beenewed.model.Store;
 import beenewed.ui.*;
@@ -135,6 +136,13 @@ public class RenewalsScreen extends JPanel {
     // ---------------------------------------------------------------- History
     private JComponent historyCard() {
         UI.RoundPanel card = UI.card(new BorderLayout(0, 16), 18);
+        UI.Btn exportCsv = UI.secondary("Export CSV", Icons.Type.SAVE);
+        exportCsv.setToolTipText("Export recorded payment ledger to CSV");
+        exportCsv.addActionListener(e -> {
+            Store st = Store.get();
+            String csv = CsvExporter.exportPaymentLedger(st.paymentsNewestFirst(), st::payerNameFor);
+            Common.exportCsvWithDialog(this, "beenewed-payment-ledger-" + Store.today() + ".csv", csv);
+        });
         UI.Btn rec = UI.primary("Record Payment", Icons.Type.PLUS);
         rec.addActionListener(e -> App.get().recordPayment(null));
 
@@ -147,7 +155,9 @@ public class RenewalsScreen extends JPanel {
             @Override public void doLayout() { paySearch.setBounds(0, 0, getWidth(), getHeight()); icon.setBounds(11, 0, 18, getHeight()); }
         };
         JPanel filters = UI.hrow(18, labeled("Payment Date:", payDate), labeled("Subscription Status:", payStatus), searchWrap);
-        card.add(UI.vstack(14, UI.split(Common.cardHeading(null, "Payment History", "Read-only ledger of recorded payments across your subscriptions."), rec), filters), BorderLayout.NORTH);
+        card.add(UI.vstack(14, UI.split(
+                Common.cardHeading(null, "Payment History", "Read-only ledger of recorded payments across your subscriptions."),
+                UI.hrow(8, exportCsv, rec)), filters), BorderLayout.NORTH);
         payTableHolder = UI.clear(new BorderLayout());
         payTableHolder.add(historyTable());
         card.add(payTableHolder, BorderLayout.CENTER);

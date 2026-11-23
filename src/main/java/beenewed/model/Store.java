@@ -816,14 +816,77 @@ public final class Store {
 
     public SplitAllocator.DistributionSummary distributionFor(Payment payment) {
         synchronized (cacheLock) {
+            return distributionForLocked(payment);
+        }
+    }
+
+    private SplitAllocator.DistributionSummary distributionForLocked(Payment payment) {
+        List<Member> subMembers = membersForLocked(payment.sub.id);
+        List<Contribution> paymentContribs = new ArrayList<>();
+        for (Contribution c : contributions) {
+            if (c.payment != null && c.payment.id == payment.id) {
+                paymentContribs.add(c);
+            }
+        }
+        return SplitAllocator.computeDistribution(payment, subMembers, paymentContribs);
+    }
+
+    public String payerNameFor(Payment payment) {
+        synchronized (cacheLock) {
+            if (payment == null || payment.sub == null) {
+                return SplitAllocator.OWNER_LABEL;
+            }
             List<Member> subMembers = membersForLocked(payment.sub.id);
-            List<Contribution> paymentContribs = new ArrayList<>();
-            for (Contribution c : contributions) {
-                if (c.payment != null && c.payment.id == payment.id) {
-                    paymentContribs.add(c);
+            if (subMembers.isEmpty()) {
+                return SplitAllocator.OWNER_LABEL;
+            }
+            return distributionForLocked(payment).payerName();
+        }
+    }
+
+    public List<SplitAllocator.DistributionSummary> allSharedPaymentDistributions() {
+        synchronized (cacheLock) {
+            List<Payment> ordered = new ArrayList<>(payments);
+            ordered.sort(PAYMENT_NEWEST_FIRST);
+            List<SplitAllocator.DistributionSummary> result = new ArrayList<>();
+            for (Payment p : ordered) {
+                if (p.sub == null) continue;
+                if (!membersForLocked(p.sub.id).isEmpty()) {
+                    result.add(distributionForLocked(p));
                 }
             }
-            return SplitAllocator.computeDistribution(payment, subMembers, paymentContribs);
+            return result;
+        }
+    }
+
+    public List<AnalyticsEngine.CategoryMetric> categoryDistribution() {
+        synchronized (cacheLock) {
+            return AnalyticsEngine.categoryDistribution(subscriptions);
+        }
+    }
+
+    public AnalyticsEngine.ForecastReport forecastExpenses(int horizonMonths) {
+        synchronized (cacheLock) {
+            return AnalyticsEngine.forecastExpenses(subscriptions, today(), horizonMonths);
+        }
+    }
+
+    public AnalyticsEngine.EfficiencyReport usageEfficiencyReport() {
+        synchronized (cacheLock) {
+            return AnalyticsEngine.evaluateUsageEfficiency(subscriptions, usages, today());
+        }
+    }
+
+    public AnalyticsEngine.UsageEfficiency usageEfficiencyFor(Subscription subscription) {
+        synchronized (cacheLock) {
+            List<Usage> subUsages = new ArrayList<>();
+            for (Usage u : usages) {
+                if (u.sub != null && u.sub.id == subscription.id) {
+                    subUsages.add(u);
+                }
+            }
+            return AnalyticsEngine.evaluateSingleSubscription(
+                    subscription, subUsages, today(), AnalyticsEngine.DEFAULT_USAGE_WINDOW_DAYS);
         }
     }
 

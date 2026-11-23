@@ -1,12 +1,17 @@
 package beenewed.screens;
 
+import beenewed.model.AnalyticsEngine;
+import beenewed.model.CsvExporter;
 import beenewed.model.Models.*;
 import beenewed.model.Store;
 import beenewed.ui.*;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
+import javax.swing.filechooser.FileNameExtensionFilter;
 import java.awt.*;
+import java.io.File;
+import java.io.IOException;
 import java.time.LocalDate;
 
 /** Small pieces reused across screens. */
@@ -52,6 +57,67 @@ public final class Common {
             return new UI.Pill("Inactive", Theme.MUTED, Theme.SUBTLE, Theme.PLACEHOLDER, 999);
         }
         return dueBadge(s.nextRenewal);
+    }
+
+    /** Utilization pill: red for No Usage, amber for Low Usage, green for Active Use. */
+    public static UI.Pill utilizationBadge(AnalyticsEngine.UtilizationLevel level) {
+        return switch (level) {
+            case UNUSED -> UI.badge(level.label, Theme.RED, Theme.RED_BG);
+            case LOW_USAGE -> UI.badge(level.label, Theme.AMBER, Theme.AMBER_BG);
+            case HEALTHY -> UI.badge(level.label, Theme.GREEN, Theme.GREEN_BG);
+        };
+    }
+
+    /** FlatLaf-friendly rounded horizontal progress bar for category and forecast charts. */
+    public static JComponent barTrack(double ratio, Color fillColor) {
+        double clamped = Math.max(0.0, Math.min(1.0, ratio));
+        JComponent bar = new JComponent() {
+            { setPreferredSize(new Dimension(120, 8)); setMinimumSize(new Dimension(40, 8)); }
+            @Override protected void paintComponent(Graphics g0) {
+                Graphics2D g = (Graphics2D) g0.create();
+                UI.aa(g);
+                int w = getWidth(), h = getHeight();
+                g.setColor(Theme.SUBTLE);
+                g.fillRoundRect(0, 0, w, h, h, h);
+                int fw = (int) Math.round(w * clamped);
+                if (fw > 0) {
+                    g.setColor(fillColor);
+                    g.fillRoundRect(0, 0, Math.max(fw, h), h, h, h);
+                }
+                g.dispose();
+            }
+        };
+        bar.setOpaque(false);
+        return bar;
+    }
+
+    /** Opens a Save dialog and writes UTF-8 CSV content to the selected file. */
+    public static void exportCsvWithDialog(Component parent, String defaultFileName, String csvContent) {
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle("Export CSV");
+        chooser.setFileFilter(new FileNameExtensionFilter("CSV Files (*.csv)", "csv"));
+        chooser.setSelectedFile(new File(defaultFileName));
+        if (chooser.showSaveDialog(parent) != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+        File target = chooser.getSelectedFile();
+        if (!target.getName().toLowerCase(java.util.Locale.ROOT).endsWith(".csv")) {
+            target = new File(target.getParentFile(), target.getName() + ".csv");
+        }
+        try {
+            CsvExporter.writeUtf8(target.toPath(), csvContent);
+            JOptionPane.showMessageDialog(
+                    parent,
+                    "Exported CSV to:\n" + target.getAbsolutePath(),
+                    "Export Complete",
+                    JOptionPane.INFORMATION_MESSAGE);
+        } catch (IOException error) {
+            JOptionPane.showMessageDialog(
+                    parent,
+                    "Unable to write CSV file: " + error.getMessage(),
+                    "Export Failed",
+                    JOptionPane.ERROR_MESSAGE);
+        }
     }
 
     /** Icon box + bold subscription name, used in table cells. */

@@ -1,6 +1,10 @@
 package beenewed.screens;
 
 import beenewed.App;
+import beenewed.model.AnalyticsEngine;
+import beenewed.model.AnalyticsEngine.CategoryMetric;
+import beenewed.model.AnalyticsEngine.EfficiencyReport;
+import beenewed.model.AnalyticsEngine.UsageEfficiency;
 import beenewed.model.Models.*;
 import beenewed.model.Store;
 import beenewed.ui.*;
@@ -112,9 +116,85 @@ public class DashboardScreen extends JPanel {
         c.gridx = 0; c.weightx = 0.6; c.insets = new Insets(0, 0, 0, 8); lower.add(upCard, c);
         c.gridx = 1; c.weightx = 0.4; c.insets = new Insets(0, 8, 0, 0); lower.add(payCard, c);
 
-        JPanel body = UI.vstack(16, header, stats, lower);
+        // ---- Analytics & Usage Optimization row
+        JComponent categoryCard = buildCategoryCard(st);
+        JComponent optimizationCard = buildOptimizationCard(st);
+        JPanel insights = UI.clear(new GridBagLayout());
+        GridBagConstraints ic = new GridBagConstraints();
+        ic.fill = GridBagConstraints.BOTH; ic.weighty = 1; ic.gridy = 0;
+        ic.gridx = 0; ic.weightx = 0.55; ic.insets = new Insets(0, 0, 0, 8); insights.add(categoryCard, ic);
+        ic.gridx = 1; ic.weightx = 0.45; ic.insets = new Insets(0, 8, 0, 0); insights.add(optimizationCard, ic);
+
+        JPanel body = UI.vstack(16, header, stats, lower, insights);
         add(Common.page(body), BorderLayout.CENTER);
         revalidate(); repaint();
+    }
+
+    private JComponent buildCategoryCard(Store st) {
+        List<CategoryMetric> categories = st.categoryDistribution();
+        UI.Btn openReports = UI.link("Open Reports");
+        openReports.addActionListener(e -> App.get().openReports(1));
+
+        JComponent content;
+        if (categories.isEmpty()) {
+            content = UI.label("Add an active subscription to view category spending distribution.", Theme.SMALL, Theme.MUTED);
+        } else {
+            Color[] palette = {Theme.PRIMARY, Theme.ACCENT, Theme.GREEN, Theme.ORANGE, Theme.AMBER, Theme.RED};
+            JPanel bars = UI.vstack(10);
+            int limit = Math.min(5, categories.size());
+            for (int i = 0; i < limit; i++) {
+                CategoryMetric cm = categories.get(i);
+                JComponent top = UI.split(
+                        UI.label(cm.category() + " (" + cm.activeCount() + ")", Theme.SMALL_B, Theme.TEXT),
+                        UI.label(cm.sharePercent().toPlainString() + "%  \u2022  " + Theme.peso(cm.monthlyTotal().doubleValue()) + "/mo", Theme.SMALL, Theme.TEXT_2));
+                bars.add(UI.vstack(4, top, Common.barTrack(cm.sharePercent().doubleValue() / 100.0, palette[i % palette.length])));
+            }
+            content = bars;
+        }
+        JLabel foot = UI.label("Normalized monthly spend across " + categories.size()
+                + (categories.size() == 1 ? " category." : " categories."), Theme.SMALL, Theme.MUTED);
+        return section("Spending by Category", openReports, content, foot);
+    }
+
+    private JComponent buildOptimizationCard(Store st) {
+        EfficiencyReport eff = st.usageEfficiencyReport();
+        List<UsageEfficiency> flagged = eff.rows().stream()
+                .filter(r -> r.level().isUnderutilized())
+                .toList();
+        UI.Btn openUsage = UI.link("View Efficiency");
+        openUsage.addActionListener(e -> App.get().openReports(2));
+
+        JComponent content;
+        if (eff.totalActiveCount() == 0) {
+            content = UI.label("No active subscriptions to analyze yet.", Theme.SMALL, Theme.MUTED);
+        } else if (flagged.isEmpty()) {
+            UI.RoundPanel ok = new UI.RoundPanel(new FlowLayout(FlowLayout.LEFT, 8, 8), 8, Theme.GREEN_BG, null);
+            JLabel lbl = UI.label("All active subscriptions have healthy usage in the last 30 days.", Theme.SMALL_B, Theme.GREEN);
+            lbl.setIcon(Icons.of(Icons.Type.CHECK_CIRCLE, 15, Theme.GREEN));
+            ok.add(lbl);
+            content = ok;
+        } else {
+            DataTable t = new DataTable(new String[]{"Subscription", "Uses (30d)", "Monthly", "Status"},
+                    new float[]{2.5f, 1.1f, 1.3f, 1.4f},
+                    new int[]{DataTable.L, DataTable.C, DataTable.R, DataTable.L}, false);
+            for (UsageEfficiency row : flagged.subList(0, Math.min(4, flagged.size()))) {
+                JLabel uses = UI.label(String.valueOf(row.usesInWindow()), Theme.SMALL, Theme.MUTED);
+                uses.setHorizontalAlignment(SwingConstants.CENTER);
+                t.addRow(() -> App.get().openDetails(row.subscription(), 3),
+                        Common.subCell(row.subscription(), true),
+                        uses,
+                        Common.money(row.monthlyCost().doubleValue(), false),
+                        Common.utilizationBadge(row.level()));
+            }
+            content = t;
+        }
+        JLabel foot = UI.label(flagged.isEmpty()
+                ? "Log usage entries inside any subscription to track cost-per-use."
+                : "<html>" + flagged.size() + " underutilized subscription" + (flagged.size() == 1 ? "" : "s")
+                        + ": <b style='color:" + Theme.hex(Theme.TEXT) + "'>"
+                        + Theme.peso(eff.underutilizedMonthlySpend().doubleValue()) + "/mo</b> optimization opportunity</html>",
+                Theme.SMALL, Theme.MUTED);
+        return section("Optimization Opportunities", openUsage, content, foot);
     }
 
     private JComponent stat(String label, Icons.Type icon, String value, String sub) {
