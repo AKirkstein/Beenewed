@@ -165,4 +165,35 @@ class BillingRulesTest {
         assertTrue(skipErr.getMessage().toLowerCase().contains("skip"));
         assertTrue(skipErr.getMessage().contains("December 2026"));
     }
+
+    @Test
+    void duplicateActiveSubscriptionValidationChecksNameAndExactRenewalDate() {
+        LocalDate dec1 = LocalDate.of(2026, 12, 1);
+        LocalDate dec15 = LocalDate.of(2026, 12, 15);
+        Subscription netflixActive = new Subscription(1, "Netflix", "Entertainment", Icons.Type.TELEVISION, 549.00, Cycle.MONTHLY, dec1);
+        Subscription spotifyPaused = new Subscription(2, "Spotify", "Entertainment", Icons.Type.MUSIC, 149.00, Cycle.MONTHLY, dec1);
+        spotifyPaused.status = Status.PAUSED;
+
+        List<Subscription> existing = List.of(netflixActive, spotifyPaused);
+
+        // Same name (trimmed, case-insensitive) AND exact same renewal date -> rejected
+        ValidationException dupErr = assertThrows(ValidationException.class,
+                () -> BillingRules.validateUniqueActiveSubscription("  netflix  ", dec1, null, existing));
+        assertEquals(BillingRules.DUPLICATE_SUBSCRIPTION_MESSAGE, dupErr.getMessage());
+
+        // Same name with DIFFERENT renewal date -> allowed (multiple accounts)
+        assertDoesNotThrow(() -> BillingRules.validateUniqueActiveSubscription("Netflix", dec15, null, existing));
+
+        // Editing the same active subscription (excludeSubscriptionId == 1) -> allowed
+        assertDoesNotThrow(() -> BillingRules.validateUniqueActiveSubscription("Netflix", dec1, 1, existing));
+
+        // Same name + same date as a PAUSED subscription -> allowed (only blocks active duplicates)
+        assertDoesNotThrow(() -> BillingRules.validateUniqueActiveSubscription("Spotify", dec1, null, existing));
+
+        // Deduplicating renewals drops identical active duplicates but preserves distinct renewal dates
+        Subscription dupNetflix = new Subscription(3, "  NETFLIX ", "Entertainment", Icons.Type.TELEVISION, 549.00, Cycle.MONTHLY, dec1);
+        Subscription secondNetflix = new Subscription(4, "Netflix", "Entertainment", Icons.Type.TELEVISION, 549.00, Cycle.MONTHLY, dec15);
+        List<Subscription> deduped = BillingRules.deduplicateRenewals(List.of(netflixActive, dupNetflix, secondNetflix));
+        assertEquals(List.of(netflixActive, secondNetflix), deduped);
+    }
 }

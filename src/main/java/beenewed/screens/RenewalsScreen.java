@@ -117,7 +117,7 @@ public class RenewalsScreen extends JPanel {
             String statusFilter,
             String dueFilterValue,
             LocalDate referenceDate) {
-        return orderedSubscriptions.stream()
+        List<Subscription> filtered = orderedSubscriptions.stream()
                 .filter(s -> statusFilter == null || statusFilter.startsWith("All") || s.status.label.equals(statusFilter))
                 .filter(s -> {
                     long d = ChronoUnit.DAYS.between(referenceDate, s.nextRenewal);
@@ -128,6 +128,7 @@ public class RenewalsScreen extends JPanel {
                         default -> true;
                     };
                 }).collect(Collectors.toList());
+        return BillingRules.deduplicateRenewals(filtered);
     }
 
     // ---------------------------------------------------------------- History

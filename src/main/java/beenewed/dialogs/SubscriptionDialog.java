@@ -1,9 +1,11 @@
 package beenewed.dialogs;
 
+import beenewed.model.BillingRules;
 import beenewed.model.Models;
 import beenewed.model.Models.*;
 import beenewed.model.Store;
 import beenewed.ui.*;
+import com.beenewed.backend.exception.ValidationException;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -158,6 +160,19 @@ public class SubscriptionDialog extends BaseDialog {
         LocalDate d = renewal.getDate();
         fDate.error(renewal.isBlank() ? "Next renewal date is required." : d == null ? "Enter a valid date (MM/dd/yyyy or yyyy-MM-dd)." : null);
         ok &= d != null;
+        if (ok) {
+            Status effectiveStatus = editing == null ? Status.ACTIVE : editing.status;
+            if (effectiveStatus == Status.ACTIVE) {
+                Integer excludeId = editing == null ? null : editing.id;
+                try {
+                    BillingRules.validateUniqueActiveSubscription(n, d, excludeId, Store.get().subscriptions);
+                } catch (ValidationException ex) {
+                    UI.setError(name, true);
+                    fDate.error(ex.getMessage());
+                    ok = false;
+                }
+            }
+        }
         if (!ok) { body.revalidate(); body.repaint(); refit(); return null; }
 
         Cycle selectedCycle = cycle.selected();

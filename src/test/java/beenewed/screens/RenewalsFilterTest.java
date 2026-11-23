@@ -58,4 +58,16 @@ class RenewalsFilterTest {
         assertEquals(Theme.MUTED, neutral.getForeground());
         assertNotEquals(Theme.RED, neutral.getForeground());
     }
+
+    @Test
+    void filterRenewalsDoesNotDoubleRenderIdenticalDuplicatesButKeepsDifferentDates() {
+        LocalDate today = LocalDate.of(2026, 11, 23);
+        Subscription first = sub(1, "Netflix", Status.ACTIVE, today.plusDays(5));
+        Subscription identicalDup = sub(2, "  netflix ", Status.ACTIVE, today.plusDays(5));
+        Subscription differentDate = sub(3, "Netflix", Status.ACTIVE, today.plusDays(15));
+
+        List<Subscription> result = RenewalsScreen.filterRenewals(
+                List.of(first, identicalDup, differentDate), "All Statuses", "All Dates", today);
+        assertEquals(List.of(first, differentDate), result);
+    }
 }

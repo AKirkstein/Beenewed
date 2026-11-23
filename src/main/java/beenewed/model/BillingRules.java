@@ -35,6 +35,8 @@ public final class BillingRules {
     public static final int DEFAULT_PAY_AHEAD_WEEKLY = 6;
     public static final int DEFAULT_PAY_AHEAD_MONTHLY = 6;
     public static final int DEFAULT_PAY_AHEAD_YEARLY = 3;
+    public static final String DUPLICATE_SUBSCRIPTION_MESSAGE =
+            "A subscription with this name and renewal date already exists. Duplicate renewal entries are not allowed.";
 
     private BillingRules() {}
 
@@ -317,6 +319,97 @@ public final class BillingRules {
             nextDue = advanceNextDueDate(nextDue, interval);
         }
         return nextDue;
+    }
+
+    /**
+     * Canonical key for matching duplicate subscriptions by trimmed case-insensitive name
+     * and exact {@code nextRenewalDate}.
+     */
+    public static String subscriptionRenewalKey(String name, LocalDate nextRenewalDate) {
+        if (name == null || nextRenewalDate == null) {
+            return "";
+        }
+        String normalized = name.trim().toLowerCase(Locale.ROOT);
+        if (normalized.isEmpty()) {
+            return "";
+        }
+        return normalized + "|" + nextRenewalDate;
+    }
+
+    /**
+     * Returns an existing active subscription with the same name (case-insensitive, trimmed)
+     * and the exact same {@code nextRenewalDate}, excluding {@code excludeSubscriptionId} when editing.
+     */
+    public static Optional<Subscription> findDuplicateActiveSubscription(
+            String name,
+            LocalDate nextRenewalDate,
+            Integer excludeSubscriptionId,
+            List<Subscription> existingSubscriptions) {
+        if (name == null || nextRenewalDate == null || existingSubscriptions == null || existingSubscriptions.isEmpty()) {
+            return Optional.empty();
+        }
+        String targetName = name.trim();
+        if (targetName.isEmpty()) {
+            return Optional.empty();
+        }
+        for (Subscription existing : existingSubscriptions) {
+            if (existing == null || existing.status != Status.ACTIVE) {
+                continue;
+            }
+            if (excludeSubscriptionId != null && existing.id == excludeSubscriptionId) {
+                continue;
+            }
+            if (existing.name != null
+                    && existing.nextRenewal != null
+                    && existing.name.trim().equalsIgnoreCase(targetName)
+                    && existing.nextRenewal.equals(nextRenewalDate)) {
+                return Optional.of(existing);
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Enforces duplicate subscription validation: allows multiple active subscriptions with the
+     * same name if their renewal dates differ, but blocks an active duplicate with the same
+     * name (case-insensitive, trimmed) and exact same {@code nextRenewalDate}.
+     */
+    public static void validateUniqueActiveSubscription(
+            String name,
+            LocalDate nextRenewalDate,
+            Integer excludeSubscriptionId,
+            List<Subscription> existingSubscriptions) {
+        if (findDuplicateActiveSubscription(name, nextRenewalDate, excludeSubscriptionId, existingSubscriptions).isPresent()) {
+            throw new ValidationException(DUPLICATE_SUBSCRIPTION_MESSAGE);
+        }
+    }
+
+    /**
+     * Removes identical renewal entries sharing the same status, trimmed case-insensitive name,
+     * and exact renewal date so Upcoming Renewals and the Dashboard never double-render duplicates,
+     * while preserving distinct accounts with the same name on different renewal dates.
+     */
+    public static List<Subscription> deduplicateRenewals(List<Subscription> subscriptions) {
+        if (subscriptions == null || subscriptions.size() <= 1) {
+            return subscriptions == null ? List.of() : new ArrayList<>(subscriptions);
+        }
+        Set<String> seen = new LinkedHashSet<>();
+        List<Subscription> unique = new ArrayList<>(subscriptions.size());
+        for (Subscription s : subscriptions) {
+            if (s == null) {
+                continue;
+            }
+            String renewalKey = subscriptionRenewalKey(s.name, s.nextRenewal);
+            if (renewalKey.isEmpty()) {
+                unique.add(s);
+                continue;
+            }
+            String compositeKey = (s.status == null ? "" : s.status.name()) + "|" + renewalKey;
+            if (seen.add(compositeKey)) {
+                unique.add(s);
+            }
+        }
+        return unique;
     }
 
     /**

@@ -14,6 +14,9 @@ import java.util.List;
 import java.util.Objects;
 
 public final class SubscriptionService {
+    public static final String DUPLICATE_SUBSCRIPTION_MESSAGE =
+            "A subscription with this name and renewal date already exists. Duplicate renewal entries are not allowed.";
+
     private final SubscriptionDao subscriptionDao;
 
     public SubscriptionService(SubscriptionDao subscriptionDao) {
@@ -24,6 +27,9 @@ public final class SubscriptionService {
         validate(subscription);
         if (subscription.id() != null) {
             throw new ValidationException("A new subscription must not have an id");
+        }
+        if (subscription.status() == SubscriptionStatus.ACTIVE) {
+            ensureNoDuplicateActive(subscription.name(), subscription.nextRenewalDate(), null);
         }
         return subscriptionDao.insert(subscription);
     }
@@ -63,6 +69,9 @@ public final class SubscriptionService {
         if (subscription.status() != existing.status()) {
             throw new ValidationException("Use a status transition method to change subscription status");
         }
+        if (subscription.status() == SubscriptionStatus.ACTIVE) {
+            ensureNoDuplicateActive(subscription.name(), subscription.nextRenewalDate(), subscription.id());
+        }
         if (!subscriptionDao.update(subscription)) {
             throw new NotFoundException("Subscription not found: " + subscription.id());
         }
@@ -97,7 +106,23 @@ public final class SubscriptionService {
         LocalDate renewalDate = nextRenewalDate == null
                 ? subscription.nextRenewalDate()
                 : nextRenewalDate;
+        ensureNoDuplicateActive(subscription.name(), renewalDate, subscription.id());
         return saveStatus(subscription, SubscriptionStatus.ACTIVE, renewalDate);
+    }
+
+    private void ensureNoDuplicateActive(String name, LocalDate nextRenewalDate, Long excludeId) throws SQLException {
+        String targetName = name.trim();
+        for (Subscription active : subscriptionDao.findFiltered(null, null, SubscriptionStatus.ACTIVE)) {
+            if (excludeId != null && excludeId.equals(active.id())) {
+                continue;
+            }
+            if (active.name() != null
+                    && active.nextRenewalDate() != null
+                    && active.name().trim().equalsIgnoreCase(targetName)
+                    && active.nextRenewalDate().equals(nextRenewalDate)) {
+                throw new ValidationException(DUPLICATE_SUBSCRIPTION_MESSAGE);
+            }
+        }
     }
 
     public boolean delete(Long subscriptionId) throws SQLException {

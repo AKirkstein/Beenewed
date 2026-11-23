@@ -40,6 +40,7 @@ class StorePhase2Test {
 
     private HttpServer server;
     private SupabaseAuthService auth;
+    private final AtomicLong nextSubId = new AtomicLong(40);
     private final AtomicLong nextPaymentId = new AtomicLong(100);
     private final AtomicLong nextMemberId = new AtomicLong(20);
     private final AtomicLong nextContribId = new AtomicLong(500);
@@ -273,6 +274,36 @@ class StorePhase2Test {
         assertEquals(new BigDecimal("183.00"), after.totalCollected());
     }
 
+    @Test
+    void duplicateActiveSubscriptionBlocksSameNameAndDateButAllowsDifferentDate() {
+        Store st = Store.get();
+        Subscription netflix = st.getSubscription(1);
+        LocalDate existingDue = netflix.nextRenewal;
+
+        // Same name (trimmed, case-insensitive) + exact same renewal date -> blocked locally without HTTP calls
+        httpLog.clear();
+        Subscription dup = new Subscription(0, "  netflix ", "Entertainment", beenewed.ui.Icons.Type.TELEVISION,
+                549.00, Cycle.MONTHLY, existingDue);
+        ValidationException dupErr = assertThrows(ValidationException.class, () -> st.addSubscription(dup));
+        assertEquals(BillingRules.DUPLICATE_SUBSCRIPTION_MESSAGE, dupErr.getMessage());
+        assertTrue(httpLog.isEmpty(), "Duplicate active subscription must not hit Supabase");
+
+        // Same name with a DIFFERENT renewal date -> allowed
+        Subscription secondAccount = new Subscription(0, "Netflix", "Entertainment", beenewed.ui.Icons.Type.TELEVISION,
+                549.00, Cycle.MONTHLY, existingDue.plusDays(10));
+        assertDoesNotThrow(() -> st.addSubscription(secondAccount));
+        assertEquals(2, st.byRenewal(st.active()).size(), "Both Netflix accounts with different dates should appear");
+
+        // Updating the second account to collide with the first account's renewal date -> blocked
+        Subscription createdSecond = st.active().stream().filter(s -> s.id != netflix.id).findFirst().orElseThrow();
+        httpLog.clear();
+        Subscription collidingEdit = new Subscription(createdSecond.id, "NETFLIX", createdSecond.category,
+                createdSecond.icon, createdSecond.price, createdSecond.cycle, existingDue);
+        ValidationException editErr = assertThrows(ValidationException.class, () -> st.updateSubscription(collidingEdit));
+        assertEquals(BillingRules.DUPLICATE_SUBSCRIPTION_MESSAGE, editErr.getMessage());
+        assertTrue(httpLog.isEmpty(), "Colliding edit must not hit Supabase");
+    }
+
     private void handle(HttpExchange ex) throws IOException {
         String method = ex.getRequestMethod();
         String path = ex.getRequestURI().getPath();
@@ -296,6 +327,13 @@ class StorePhase2Test {
                     + subJson(2, "Cloud", 199.00, "MONTHLY", LocalDate.now().minusDays(2), "PAUSED") + ","
                     + subJson(3, "OldApp", 299.00, "MONTHLY", LocalDate.now().minusDays(10), "CANCELLED")
                     + "]";
+        } else if (path.equals("/rest/v1/subscriptions") && method.equals("POST")) {
+            JsonObject obj = JsonParser.parseString(reqBody).getAsJsonObject();
+            long id = nextSubId.getAndIncrement();
+            obj.addProperty("id", id);
+            obj.addProperty("created_at", "2026-11-23T00:00:00Z");
+            obj.addProperty("updated_at", "2026-11-23T00:00:00Z");
+            resp = "[" + obj + "]";
         } else if (path.equals("/rest/v1/subscriptions") && method.equals("PATCH")) {
             JsonObject obj = JsonParser.parseString(reqBody).getAsJsonObject();
             if (obj.has("next_renewal_date")) {

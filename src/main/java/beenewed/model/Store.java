@@ -294,6 +294,12 @@ public final class Store {
 
     public void addSubscription(Subscription subscription) {
         withBackend(() -> {
+            synchronized (cacheLock) {
+                if (subscription.status == Status.ACTIVE) {
+                    BillingRules.validateUniqueActiveSubscription(
+                            subscription.name, subscription.nextRenewal, null, subscriptions);
+                }
+            }
             com.beenewed.backend.model.Subscription created =
                     supabase.createSubscription(toBackendSubscription(subscription, null));
             synchronized (cacheLock) {
@@ -314,6 +320,10 @@ public final class Store {
                 }
                 if (existing.status != subscription.status) {
                     throw new ValidationException("Use a status transition method to change subscription status");
+                }
+                if (subscription.status == Status.ACTIVE) {
+                    BillingRules.validateUniqueActiveSubscription(
+                            subscription.name, subscription.nextRenewal, subscription.id, subscriptions);
                 }
             }
             com.beenewed.backend.model.Subscription updated =
@@ -362,6 +372,10 @@ public final class Store {
                 }
                 if (targetStatus == Status.ACTIVE && existing.status == Status.ACTIVE) {
                     throw new ValidationException("Subscription is already active");
+                }
+                if (targetStatus == Status.ACTIVE) {
+                    BillingRules.validateUniqueActiveSubscription(
+                            existing.name, existing.nextRenewal, existing.id, subscriptions);
                 }
                 renewalDate = existing.nextRenewal;
             }
@@ -1017,8 +1031,10 @@ public final class Store {
 
     public List<Subscription> byRenewal(List<Subscription> list) {
         List<Subscription> ordered = new ArrayList<>(list);
-        ordered.sort(Comparator.comparing(subscription -> subscription.nextRenewal));
-        return ordered;
+        ordered.sort(Comparator.comparing((Subscription subscription) -> subscription.nextRenewal)
+                .thenComparing(subscription -> subscription.name == null ? "" : subscription.name, String.CASE_INSENSITIVE_ORDER)
+                .thenComparingInt(subscription -> subscription.id));
+        return BillingRules.deduplicateRenewals(ordered);
     }
 
     public List<Payment> findPayments(
