@@ -1,113 +1,156 @@
-# Beenewed — Subscription Tracker
+# Beenewed
 
-**Beenewed** is a Java Swing desktop subscription manager backed by **Supabase Auth** (with **Email OTP** verification) and **PostgreSQL**. It gives each user their own cloud-synced account to organize recurring subscriptions, renewal reminders, payments, shared member contributions, usage logs, and price history in one place.
+[![Java](https://img.shields.io/badge/Java-17%2B-orange?logo=openjdk&logoColor=white)](https://adoptium.net/)
+[![Maven](https://img.shields.io/badge/Maven-3.8%2B-C71A36?logo=apachemaven&logoColor=white)](https://maven.apache.org/)
+[![Tests](https://img.shields.io/badge/Tests-62%20passing-15803D)](src/test/java)
+[![License](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
 
-## Why Beenewed?
+**Beenewed** is a financial-grade desktop subscription tracker and expense management application built with **Java 17**, **FlatLaf**, and **Supabase**. It gives you a fast, cloud-synced workspace to monitor recurring renewals, lock in auditable payment ledgers, coordinate family split billing, and spot underutilized subscriptions before they drain your budget.
 
-Keeping track of recurring subscriptions, shared costs and household members, payment history, upcoming renewals, and whether you still actually use a service quickly gets messy across spreadsheets and scattered notes. Beenewed brings everything into one clean, fast desktop app with cloud-backed accounts and responsive in-memory caching so switching views, filtering, and checking spending summaries feels instant.
+---
 
-**Built with:** Java 17 · Java Swing & FlatLaf · Apache Maven · Gson · Supabase Auth (Email OTP) · PostgreSQL
+## What Is Beenewed?
 
-## Light / Dark Mode
+Subscriptions rarely fail loudly—they quietly auto-renew across streaming platforms, cloud storage, utilities, and shared family plans until your monthly bill creeps higher than expected. Spreadsheets go stale, group splits turn into awkward guesswork, and it is hard to tell which services you still get value from.
 
-- Click the **sun / moon switch** in the top-right header bar to switch the entire app between Light and Dark mode instantly—sidebar, header, cards, tables, forms, dropdowns, dialogs, and buttons update in place without leaving your current page.
-- **Settings → Appearance** controls the exact same setting and always stays in sync with the header switch.
-- **Your preference is saved** to your account in Supabase (`app_preferences`). Light mode is the default for new accounts.
-- All colours live in `src/main/java/beenewed/ui/Theme.java` (`Theme.apply(dark)`), using the Beenewed palette: yellow `#F4B315`, orange `#E59312`, warm `#D3AF85`, and `#1A141A` / `#423738` / `#514344` for dark surfaces.
+Beenewed solves this in a single desktop application:
 
-## Prerequisites & Tools
+- **Eliminate recurring subscription leakage** by tracking every active, paused, and cancelled service in one place with instant search and filtering.
+- **Prevent surprise charges** with automated cycle-by-cycle renewal advancement, overdue detection, and dismissible renewal reminders.
+- **Keep family and group billing fair** with designated payers, cent-accurate split math, and clear Paid vs. Pending reimbursement tracking.
+- **Measure real-world value** by pairing recurring costs with 30-day usage telemetry so you immediately see cost-per-use and underutilized plans.
 
-Before running the app, make sure you have:
+---
 
-- **Java Development Kit (JDK 17+)** — verify with `java -version`
-- **Apache Maven 3.10.2 (Binary Zip)** — step-by-step Windows setup instructions are in **Step 2** below
-- **VS Code (Optional):** Install the **Extension Pack for Java** (`vscjava.vscode-java-pack`) for Java IntelliSense, Maven integration, and easy running/debugging.
+## Key Capabilities
 
-## How to Build & Run
+| Capability | What It Does |
+| --- | --- |
+| **Recurring Subscription Management** | Supports **Weekly**, **Monthly**, and **Yearly** billing interval logic with automated cycle-by-cycle renewal date advancement (safely handling month-end rollovers and leap years), overdue tracking, and full lifecycle states (`Active`, `Paused`, `Cancelled`). |
+| **Immutable Payment Ledgers** | Prevents duplicate payments within the same billing period, enforces payment amount alignment against the subscription price or designated split share, and preserves recorded payments as read-only ledger receipts. |
+| **Family Cost Splitting** | Designate a Group Head / Primary Payer and split bills equally (with exact cent-level rounding) or with validated custom allocations—persisted cleanly with zero extra database migrations and tracked per member as **Paid**, **Partial**, or **Pending**. |
+| **Spending Analytics & Cash-Flow Forecasts** | Separates **Actual Paid** history from **Current Estimated Recurring Cost**, normalizes Weekly/Monthly/Yearly commitments to monthly and annual equivalents, visualizes spending by category, and projects scheduled cash outflows **1 to 6 months** ahead. |
+| **Usage Telemetry & Cost Efficiency** | Integrates manual usage logs over a **30-day rolling window** to compute **Cost / Day** and **Cost / Use**, automatically badging active services as **No Usage** (`0`), **Low Usage** (`1–2`), or **Active Use** (`3+`). |
+| **Data Protection & CSV Exports** | Exports RFC-4180 CSV reports for **Payment History**, **Active Subscriptions**, and **Family Split Distributions**, complete with spreadsheet formula-injection neutralization and metadata stripping. |
+| **Offline Resilience** | Automatically persists a token-free local **SQLite** snapshot (`~/.beenewed/offline-cache.db`). If network connectivity drops or Supabase is unreachable at startup, Beenewed opens cleanly in **read-only offline mode** with a non-blocking reconnect banner. |
+| **Account Security & Theming** | Supabase Email + OTP authentication with strong password policy enforcement (8+ chars, upper/lower/number/symbol), automatic session token refresh, local-scope sign-out, and instant **Light / Dark Mode** switching via FlatLaf. |
 
-### Step 1: Clone the repository
+---
 
-Clone the project on `main` and open the folder:
+## Prerequisites
 
-```sh
+- **Java Development Kit (JDK) 17 or newer** (`java -version`)
+- **Apache Maven 3.8 or newer** (`mvn -version`)
+- **Supabase Project & Internet Access** for initial sign-in and cloud sync (schema provided in `src/main/resources/db/supabase_schema.sql`)
+
+---
+
+## Getting Started
+
+### 1. Clone the Repository
+
+```bash
 git clone https://github.com/AKirkstein/Beenewed.git
 cd Beenewed
 ```
 
-### Step 2: Install & Configure Maven (Windows)
+### 2. Configure Supabase Credentials
 
-If you already have Maven installed and `mvn -version` works in your terminal, you can skip to **Step 3**.
-
-1. Go to the official Apache Maven download page: https://maven.apache.org/download.cgi
-2. Under **Files**, download the **Binary zip archive**: `apache-maven-3.10.2-bin.zip`.
-3. Extract the zip file to a clean, permanent directory—for example:
-   - `C:\Program Files\apache-maven-3.10.2` or
-   - `C:\tools\apache-maven-3.10.2`
-4. Add Maven to your Windows Environment Variables:
-   1. Open Windows Search, type **"Edit the system environment variables"**, and open it.
-   2. Click **Environment Variables...** near the bottom-right.
-   3. Under **System variables**, select `Path` and click **Edit**.
-   4. Click **New** and paste the path to Maven's `bin` folder (for example, `C:\Program Files\apache-maven-3.10.2\bin`).
-   5. *(Optional best practice)* Under **System variables**, click **New** and add `MAVEN_HOME` (or `M2_HOME`) pointing to the extracted root folder (for example, `C:\Program Files\apache-maven-3.10.2`).
-   6. Click **OK** on all open dialogs to save.
-5. Open a **new** terminal window (PowerShell or Command Prompt) and verify the installation:
-
-```sh
-mvn -version
-```
-
-You should see Apache Maven 3.10.2 and your Java 17+ version printed.
-
-### Step 3: Configure credentials
-
-Copy `.env.example` to `.env` in the project root:
-
-```sh
-# Windows (PowerShell)
-Copy-Item .env.example .env
-
-# macOS / Linux
-cp .env.example .env
-```
-
-Open `.env` and paste the project's `SUPABASE_URL` and `SUPABASE_ANON_KEY`:
+Create a `.env` file in the project root (or in `~/.beenewed/.env`, or export these as system environment variables):
 
 ```env
-SUPABASE_URL=your-supabase-project-url
+SUPABASE_URL=https://your-project-ref.supabase.co
 SUPABASE_ANON_KEY=your-supabase-anon-key
 ```
 
-> **Note for groupmates:** Ask a teammate for the shared `SUPABASE_URL` and `SUPABASE_ANON_KEY` values. **Never commit `.env` to Git** (it is already ignored in `.gitignore`). You can also set `SUPABASE_URL` and `SUPABASE_ANON_KEY` directly as system environment variables instead of using a `.env` file.
+> **Note:** Never commit `.env` to Git (it is excluded by `.gitignore`). When launching the standalone JAR from any working directory, Beenewed automatically searches environment variables, `./.env`, the JAR directory's `.env`, and `~/.beenewed/.env` in order.
 
-### Step 4: Run the application
+If you are setting up a fresh Supabase project, run `src/main/resources/db/supabase_schema.sql` in the Supabase SQL Editor first to create the Row Level Security–protected tables.
 
-**Quick start on Windows:**
+### 3. Run in Development Mode (Maven)
+
+```bash
+mvn compile exec:java -Dexec.mainClass=beenewed.App
+```
+
+On Windows PowerShell / Command Prompt, you can also use the included helper script:
 
 ```powershell
-.\run
+.\run.bat
 ```
 
-**Run via Maven (Windows / macOS / Linux):**
+### 4. Build & Launch the Standalone Production Fat JAR
 
-```sh
-mvn compile exec:java "-Dexec.mainClass=beenewed.App"
+Package a self-contained executable JAR (bundling FlatLaf, SQLite JDBC natives, Gson, and resources) using the `standalone` profile:
+
+```bash
+mvn clean package -Pstandalone
 ```
 
-**Run the automated test suite:**
+Then launch it from any directory:
 
-```sh
-mvn clean test
-```
+```powershell
+# Windows launcher
+.\run-standalone.bat
 
-**Build & run the standalone JAR:**
-
-```sh
-mvn clean package
+# Cross-platform Java command
 java -jar target/beenewed-standalone.jar
 ```
 
-> Make sure `.env` is in the folder where you run `java -jar` (or set `SUPABASE_URL` and `SUPABASE_ANON_KEY` as environment variables).
+---
 
-### First-Time Sign Up
+## Verification & Automated Testing
 
-When the app opens, click **Create Account** in the login window, enter your email and password, enter the **Email OTP verification code** sent to your inbox, and then sign in. Once on the Dashboard, you can click **Refresh** anytime to re-sync your latest data from Supabase.
+Run the full automated JUnit 5 test suite with:
+
+```bash
+mvn test
+```
+
+The suite includes **62 unit and integration tests** covering:
+
+- **Authentication & Session Security:** Password policy enforcement, token redaction, automatic token refresh, local-scope sign-out, and OTP cleanup.
+- **Billing & Ledger Integrity:** Duplicate billing-period detection, positive `BigDecimal` amount alignment, `ResolverStyle.STRICT` date parsing, keystroke `DocumentFilter`s, due-date advancement, and read-only receipt enforcement.
+- **Family Splits & Reminders:** Cent-accurate equal splitting, custom split total validation, Group Head paid/pending distribution, and viewed reminder badge tracking.
+- **Analytics, Forecasting & CSV Security:** Weekly/Monthly/Yearly normalization, category distribution, 1–6 month cash-flow projections, 30-day usage efficiency metrics, and RFC-4180 CSV escaping with formula-injection protection.
+- **Offline Resilience & Lifecycle:** Local SQLite snapshot persistence, offline read-only fallback, fetch debouncing, executor shutdown, and Swing EDT UI regression checks.
+
+---
+
+## Architecture & Tech Stack
+
+| Layer | Technology |
+| --- | --- |
+| **Language & Runtime** | Java 17 |
+| **Desktop UI & Theming** | Java Swing + FlatLaf 3.5.2 (Light & Dark themes) |
+| **Remote Auth & Cloud Data** | Supabase GoTrue Auth (Email OTP) & PostgREST (`java.net.http.HttpClient`) |
+| **Local Offline Cache** | SQLite (`sqlite-jdbc` 3.46.1.0) + Gson 2.11.0 |
+| **Build & Packaging** | Apache Maven + Maven Shade Plugin (`beenewed-standalone.jar`) |
+| **Testing** | JUnit 5 (Jupiter 5.11.3) |
+
+### Project Structure
+
+```text
+src/
+├── main/
+│   ├── java/
+│   │   ├── beenewed/
+│   │   │   ├── App.java                     # Main frame, navigation, connectivity banner & lifecycle
+│   │   │   ├── model/
+│   │   │   │   ├── Models.java              # Core domain records (Subscription, Payment, Member, Usage...)
+│   │   │   │   ├── Store.java               # In-memory cache, offline fallback, debounced sync & mutations
+│   │   │   │   ├── BillingRules.java        # Duplicate detection, amount alignment & due-date advancement
+│   │   │   │   ├── SplitAllocator.java      # Equal/custom split math, settlement summaries & metadata codec
+│   │   │   │   ├── AnalyticsEngine.java     # Normalization, category breakdown, 1–6m forecast & efficiency
+│   │   │   │   └── CsvExporter.java         # RFC-4180 CSV exports with formula-injection neutralization
+│   │   │   ├── screens/                     # Dashboard, Subscriptions, Details, Renewals, Reports, Settings
+│   │   │   ├── dialogs/                     # Login, Subscription, Payment Receipt, SplitConfig, Reminders, Usage
+│   │   │   └── ui/                          # Theme, Icons, DataTable, DateField, InputFilters, ProfileMenu
+│   │   └── com/beenewed/
+│   │       ├── supabase/                    # SupabaseConfig, AuthService, RestClient, LocalSnapshotCache
+│   │       └── backend/                     # Shared domain models, DAOs, SQLite config & backend services
+│   └── resources/
+│       └── db/                              # schema.sql & supabase_schema.sql
+└── test/
+    └── java/                                # 62 JUnit 5 unit, Swing UI, mock-HTTP & SQLite tests
+```
