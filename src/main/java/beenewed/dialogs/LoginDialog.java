@@ -7,6 +7,7 @@ import com.beenewed.supabase.LocalSnapshotCache;
 import com.beenewed.supabase.PasswordPolicy;
 import com.beenewed.supabase.SupabaseAuthException;
 import com.beenewed.supabase.SupabaseAuthService;
+import com.beenewed.supabase.SupabaseRestClient;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -20,6 +21,7 @@ import java.util.EnumSet;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ExecutionException;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
 /**
@@ -35,12 +37,15 @@ public final class LoginDialog extends JDialog {
     private final Runnable onAuthenticatedLoad;
     private final LocalSnapshotCache localCache;
     private final Consumer<LocalSnapshotCache.CachedSnapshot> onOfflineOpen;
+    private final BooleanSupplier connectivityChecker;
 
     private Mode mode = Mode.SIGN_IN;
     private String pendingVerifyEmail;
     private boolean authenticated = false;
     private boolean offlineOpened = false;
     private boolean busy = false;
+    private boolean networkOffline = false;
+    private boolean checkingConnectivity = false;
 
     private final UI.Btn signInTab = UI.soft("Sign In", null);
     private final UI.Btn signUpTab = UI.ghost("Create Account", null);
@@ -48,6 +53,12 @@ public final class LoginDialog extends JDialog {
 
     private final JLabel headingLabel = UI.h2("Welcome back");
     private final JLabel subtitleLabel = UI.label("Sign in to access your Beenewed subscriptions and preferences.", Theme.SMALL, Theme.MUTED);
+
+    private final UI.RoundPanel offlineNoticePanel = new UI.RoundPanel(new BorderLayout(8, 0), 8, Theme.AMBER_BG, Theme.INFO_BORDER);
+    private final JLabel offlineNoticeIcon = new JLabel();
+    private final JTextArea offlineNoticeText = new JTextArea();
+    private final UI.Btn retryConnectBtn = UI.secondary("Retry", Icons.Type.REFRESH).small();
+    private final JPanel offlineNoticeWrap;
 
     private final UI.RoundPanel bannerPanel = new UI.RoundPanel(new BorderLayout(8, 0), 8, Theme.RED_BG, null);
     private final JLabel bannerIcon = new JLabel();
@@ -100,11 +111,25 @@ public final class LoginDialog extends JDialog {
             Runnable onAuthenticatedLoad,
             LocalSnapshotCache localCache,
             Consumer<LocalSnapshotCache.CachedSnapshot> onOfflineOpen) {
+        this(owner, authService, onAuthenticatedLoad, localCache, onOfflineOpen,
+                authService == null ? () -> true : authService::isServerReachable);
+    }
+
+    public LoginDialog(
+            Frame owner,
+            SupabaseAuthService authService,
+            Runnable onAuthenticatedLoad,
+            LocalSnapshotCache localCache,
+            Consumer<LocalSnapshotCache.CachedSnapshot> onOfflineOpen,
+            BooleanSupplier connectivityChecker) {
         super(owner, "Beenewed \u2014 Sign In", true);
         this.authService = authService;
         this.onAuthenticatedLoad = onAuthenticatedLoad;
         this.localCache = localCache;
         this.onOfflineOpen = onOfflineOpen;
+        this.connectivityChecker = connectivityChecker != null
+                ? connectivityChecker
+                : (authService == null ? () -> true : authService::isServerReachable);
 
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setResizable(false);
@@ -137,6 +162,27 @@ public final class LoginDialog extends JDialog {
         // Heading & subtitle
         JPanel headerBlock = UI.vstack(4, headingLabel, subtitleLabel);
         headerBlock.setBorder(new EmptyBorder(0, 0, 14, 0));
+
+        // Offline connectivity banner (visible when Supabase is unreachable)
+        offlineNoticePanel.setBorder(new EmptyBorder(10, 12, 10, 10));
+        offlineNoticeIcon.setVerticalAlignment(SwingConstants.TOP);
+        offlineNoticeIcon.setIcon(Icons.of(Icons.Type.ALERT, 15, Theme.AMBER));
+        offlineNoticeText.setFont(Theme.SMALL);
+        offlineNoticeText.setForeground(Theme.AMBER);
+        offlineNoticeText.setLineWrap(true);
+        offlineNoticeText.setWrapStyleWord(true);
+        offlineNoticeText.setEditable(false);
+        offlineNoticeText.setFocusable(false);
+        offlineNoticeText.setOpaque(false);
+        offlineNoticeText.setBorder(null);
+        retryConnectBtn.addActionListener(e -> checkConnectivityAsync());
+        JPanel retryWrap = UI.clear(new GridBagLayout());
+        retryWrap.add(retryConnectBtn);
+        offlineNoticePanel.add(offlineNoticeIcon, BorderLayout.WEST);
+        offlineNoticePanel.add(offlineNoticeText, BorderLayout.CENTER);
+        offlineNoticePanel.add(retryWrap, BorderLayout.EAST);
+        offlineNoticeWrap = wrapSection(offlineNoticePanel, 12);
+        offlineNoticeWrap.setVisible(false);
 
         // Inline banner (hidden until an error or info notice occurs)
         bannerPanel.setBorder(new EmptyBorder(10, 12, 10, 12));
@@ -220,12 +266,12 @@ public final class LoginDialog extends JDialog {
         JPanel submitWrap = wrapSection(submitBtn, 10);
         submitWrap.setBorder(new EmptyBorder(6, 0, 10, 0));
 
-        // Offline read-only fallback button (visible on Sign In when a local SQLite snapshot exists)
+        // Offline read-only fallback button (visible on Sign In only when an active local session exists)
         offlineBtn.setMaximumSize(new Dimension(Integer.MAX_VALUE, 38));
         offlineBtn.setPreferredSize(new Dimension(DIALOG_WIDTH - 100, 38));
         offlineBtn.addActionListener(e -> openOfflineCache());
         offlineWrap = wrapSection(offlineBtn, 10);
-        offlineWrap.setVisible(hasLocalOfflineCache());
+        offlineWrap.setVisible(hasActiveOfflineSession());
 
         // Resend code button (Verify Email mode only)
         resendBtn.setMaximumSize(new Dimension(Integer.MAX_VALUE, 38));
@@ -255,6 +301,7 @@ public final class LoginDialog extends JDialog {
                 brandRow,
                 modeBarWrap,
                 headerBlock,
+                offlineNoticeWrap,
                 bannerWrap,
                 verifyEmailWrap,
                 emailSection,
@@ -293,7 +340,10 @@ public final class LoginDialog extends JDialog {
     public boolean showDialog() {
         fitDialog();
         setLocationRelativeTo(getOwner());
-        SwingUtilities.invokeLater(emailField::requestFocusInWindow);
+        SwingUtilities.invokeLater(() -> {
+            emailField.requestFocusInWindow();
+            checkConnectivityAsync();
+        });
         setVisible(true);
         return authenticated;
     }
@@ -303,25 +353,114 @@ public final class LoginDialog extends JDialog {
         return offlineOpened;
     }
 
-    private boolean hasLocalOfflineCache() {
-        return localCache != null && onOfflineOpen != null && localCache.hasAnySnapshot();
+    /** Returns {@code true} if the auth screen is currently gated because Supabase is unreachable. */
+    public boolean isNetworkOffline() {
+        return networkOffline;
+    }
+
+    private boolean hasActiveOfflineSession() {
+        return localCache != null && onOfflineOpen != null && localCache.hasActiveSessionSnapshot();
     }
 
     private void openOfflineCache() {
-        if (busy || !hasLocalOfflineCache()) {
+        if (busy || localCache == null || onOfflineOpen == null) {
             return;
         }
-        String typedEmail = emailField.getText().trim();
-        Optional<LocalSnapshotCache.CachedSnapshot> snap = typedEmail.isEmpty()
-                ? localCache.loadLatest()
-                : localCache.loadByEmail(typedEmail).or(localCache::loadLatest);
+        Optional<LocalSnapshotCache.CachedSnapshot> snap = localCache.loadActiveSessionSnapshot();
         if (snap.isEmpty()) {
-            showBanner("No local cached data is available yet. Sign in online once to enable offline mode.", true);
+            offlineWrap.setVisible(false);
+            offlineBtn.setEnabled(false);
+            showBanner("No active offline session is available. Sign in online first to enable offline mode.", true);
             return;
         }
         onOfflineOpen.accept(snap.get());
         offlineOpened = true;
         dispose();
+    }
+
+    private void checkConnectivityAsync() {
+        if (checkingConnectivity) {
+            return;
+        }
+        checkingConnectivity = true;
+        retryConnectBtn.setEnabled(false);
+        retryConnectBtn.setText("Checking\u2026");
+
+        new SwingWorker<Boolean, Void>() {
+            @Override
+            protected Boolean doInBackground() {
+                try {
+                    return connectivityChecker.getAsBoolean();
+                } catch (RuntimeException error) {
+                    return false;
+                }
+            }
+
+            @Override
+            protected void done() {
+                boolean online = false;
+                try {
+                    online = Boolean.TRUE.equals(get());
+                } catch (InterruptedException error) {
+                    Thread.currentThread().interrupt();
+                } catch (ExecutionException ignored) {
+                    online = false;
+                }
+                applyConnectivityState(online);
+            }
+        }.execute();
+    }
+
+    private void applyConnectivityState(boolean online) {
+        this.networkOffline = !online;
+        this.checkingConnectivity = false;
+        retryConnectBtn.setText("Retry");
+        updateModeUI();
+        fitDialog();
+    }
+
+    // ---- Package-private test accessors --------------------------------
+
+    void checkConnectivitySyncForTest() {
+        boolean online;
+        try {
+            online = connectivityChecker.getAsBoolean();
+        } catch (RuntimeException error) {
+            online = false;
+        }
+        applyConnectivityState(online);
+    }
+
+    void switchModeToSignUpForTest() {
+        switchMode(Mode.SIGN_UP);
+    }
+
+    void triggerOfflineOpenForTest() {
+        openOfflineCache();
+    }
+
+    boolean isOfflineNoticeVisibleForTest() {
+        return offlineNoticeWrap.isVisible();
+    }
+
+    String getOfflineNoticeTextForTest() {
+        return offlineNoticeText.getText();
+    }
+
+    boolean isOfflineContinueVisibleForTest() {
+        return offlineWrap.isVisible();
+    }
+
+    boolean isOfflineContinueEnabledForTest() {
+        return offlineBtn.isEnabled();
+    }
+
+    boolean isSubmitEnabledForTest() {
+        return submitBtn.isEnabled();
+    }
+
+    String getSubmitButtonTextForTest() {
+        return submitBtn.getText();
     }
 
     private void switchMode(Mode target) {
@@ -408,8 +547,26 @@ public final class LoginDialog extends JDialog {
         otpSection.setVisible(isVerify);
         updatePasswordFeedback();
 
-        submitBtn.setText(defaultSubmitLabel());
-        offlineWrap.setVisible(isSignIn && hasLocalOfflineCache());
+        Optional<LocalSnapshotCache.CachedSnapshot> activeSnapshot =
+                (localCache != null && onOfflineOpen != null) ? localCache.loadActiveSessionSnapshot() : Optional.empty();
+        boolean activeOffline = activeSnapshot.isPresent();
+
+        offlineNoticeWrap.setVisible(networkOffline);
+        if (networkOffline) {
+            offlineNoticeIcon.setIcon(Icons.of(Icons.Type.ALERT, 15, Theme.AMBER));
+            offlineNoticeText.setForeground(Theme.AMBER);
+            offlineNoticeText.setText(activeOffline
+                    ? "You are offline. Network required to sign in, or continue in read-only mode."
+                    : "You are offline. Network required to sign in or create an account.");
+            offlineNoticeText.setSize(new Dimension(DIALOG_WIDTH - 210, Short.MAX_VALUE));
+        }
+
+        offlineWrap.setVisible(isSignIn && activeOffline);
+        if (activeOffline) {
+            offlineBtn.setToolTipText("View cached read-only data for " + activeSnapshot.get().email());
+        } else {
+            offlineBtn.setToolTipText(null);
+        }
         resendBtn.setText("Resend Code");
         resendWrap.setVisible(isVerify);
 
@@ -418,6 +575,8 @@ public final class LoginDialog extends JDialog {
             case SIGN_UP -> "Already have an account? Sign in";
             case VERIFY_OTP -> "Back to Sign In";
         });
+
+        applyInteractiveState(activeOffline);
     }
 
     private String defaultSubmitLabel() {
@@ -428,8 +587,35 @@ public final class LoginDialog extends JDialog {
         };
     }
 
+    private String offlineSubmitLabel() {
+        return switch (mode) {
+            case SIGN_IN -> "Network required to sign in";
+            case SIGN_UP -> "Network required to create account";
+            case VERIFY_OTP -> "Network required to verify";
+        };
+    }
+
+    private void applyInteractiveState(boolean activeOffline) {
+        boolean formEnabled = !busy && !networkOffline;
+        emailField.setEnabled(formEnabled);
+        passwordField.setEnabled(formEnabled);
+        confirmPasswordField.setEnabled(formEnabled);
+        otpField.setEnabled(formEnabled);
+        showPasswordBox.setEnabled(formEnabled);
+        signInTab.setEnabled(!busy);
+        signUpTab.setEnabled(!busy);
+        switchModeLink.setEnabled(!busy);
+        submitBtn.setEnabled(formEnabled);
+        if (!busy) {
+            submitBtn.setText(networkOffline ? offlineSubmitLabel() : defaultSubmitLabel());
+        }
+        resendBtn.setEnabled(formEnabled);
+        offlineBtn.setEnabled(!busy && activeOffline);
+        retryConnectBtn.setEnabled(!busy && !checkingConnectivity);
+    }
+
     private void submit() {
-        if (busy) {
+        if (busy || networkOffline) {
             return;
         }
         clearBanner();
@@ -537,7 +723,12 @@ public final class LoginDialog extends JDialog {
                     Thread.currentThread().interrupt();
                     showBanner("Authentication was interrupted. Please try again.", true);
                 } catch (ExecutionException error) {
-                    showBanner(errorMessage(error, "Authentication failed. Please try again."), true);
+                    if (SupabaseRestClient.isConnectivityFailure(error.getCause())) {
+                        clearBanner();
+                        applyConnectivityState(false);
+                    } else {
+                        showBanner(errorMessage(error, "Authentication failed. Please try again."), true);
+                    }
                 }
             }
         };
@@ -580,9 +771,14 @@ public final class LoginDialog extends JDialog {
                     Thread.currentThread().interrupt();
                     showBanner("Verification was interrupted. Please try again.", true);
                 } catch (ExecutionException error) {
-                    UI.setError(otpField, true);
-                    showBanner(errorMessage(error, "Invalid or expired verification code."), true);
-                    otpField.requestFocusInWindow();
+                    if (SupabaseRestClient.isConnectivityFailure(error.getCause())) {
+                        clearBanner();
+                        applyConnectivityState(false);
+                    } else {
+                        UI.setError(otpField, true);
+                        showBanner(errorMessage(error, "Invalid or expired verification code."), true);
+                        otpField.requestFocusInWindow();
+                    }
                 }
             }
         };
@@ -590,7 +786,7 @@ public final class LoginDialog extends JDialog {
     }
 
     private void resendCode() {
-        if (busy || mode != Mode.VERIFY_OTP || pendingVerifyEmail == null || pendingVerifyEmail.isBlank()) {
+        if (busy || networkOffline || mode != Mode.VERIFY_OTP || pendingVerifyEmail == null || pendingVerifyEmail.isBlank()) {
             return;
         }
         clearBanner();
@@ -617,7 +813,12 @@ public final class LoginDialog extends JDialog {
                     Thread.currentThread().interrupt();
                     showBanner("Resend request was interrupted. Please try again.", true);
                 } catch (ExecutionException error) {
-                    showBanner(errorMessage(error, "Unable to resend verification code."), true);
+                    if (SupabaseRestClient.isConnectivityFailure(error.getCause())) {
+                        clearBanner();
+                        applyConnectivityState(false);
+                    } else {
+                        showBanner(errorMessage(error, "Unable to resend verification code."), true);
+                    }
                 }
             }
         };
@@ -626,18 +827,10 @@ public final class LoginDialog extends JDialog {
 
     private void setBusy(boolean isBusy, String submitLabel, String resendLabel) {
         this.busy = isBusy;
-        emailField.setEnabled(!isBusy);
-        passwordField.setEnabled(!isBusy);
-        confirmPasswordField.setEnabled(!isBusy);
-        otpField.setEnabled(!isBusy);
-        showPasswordBox.setEnabled(!isBusy);
-        signInTab.setEnabled(!isBusy);
-        signUpTab.setEnabled(!isBusy);
-        switchModeLink.setEnabled(!isBusy);
-        submitBtn.setEnabled(!isBusy);
-        submitBtn.setText(submitLabel);
-        offlineBtn.setEnabled(!isBusy);
-        resendBtn.setEnabled(!isBusy);
+        applyInteractiveState(hasActiveOfflineSession());
+        if (isBusy) {
+            submitBtn.setText(submitLabel);
+        }
         resendBtn.setText(resendLabel);
     }
 

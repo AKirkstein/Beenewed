@@ -184,4 +184,14 @@ class SupabaseAuthServiceTest {
         assertEquals("Bearer otp-access", callsTo("/auth/v1/logout").get(0).authorization());
         assertFalse(auth.isAuthenticated(), "verify must not sign the user in");
     }
+
+    @Test
+    void isServerReachableDetectsOnlineAndOfflineStates() {
+        assertTrue(auth.isServerReachable(Duration.ofSeconds(2)),
+                "Mock GoTrue server should be reported reachable while running");
+
+        server.stop(0);
+        assertFalse(auth.isServerReachable(Duration.ofSeconds(1)),
+                "Stopped server should be reported unreachable/offline");
+    }
 }

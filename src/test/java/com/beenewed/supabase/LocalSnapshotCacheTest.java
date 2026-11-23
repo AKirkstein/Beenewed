@@ -84,9 +84,56 @@ class LocalSnapshotCacheTest {
         cache.save("uid-1", "Kirk@Example.com", sampleSnapshot("Netflix 4K"));
         assertEquals("Netflix 4K", cache.loadLatest().orElseThrow().snapshot().subscriptions().get(0).name());
 
-        // Clear removes user data cleanly
+        // Clear removes user data cleanly and invalidates active session
         cache.clearForUser("uid-1");
         assertFalse(cache.hasAnySnapshot());
+        assertFalse(cache.hasActiveSessionSnapshot());
+    }
+
+    @Test
+    void activeSessionTracksSignedInUserAndClearsCompletelyOnSignOut(@TempDir Path tempDir) {
+        Path dbFile = tempDir.resolve("offline-session.db");
+        LocalSnapshotCache cache = new LocalSnapshotCache(dbFile);
+        assertFalse(cache.hasActiveSessionSnapshot());
+        assertTrue(cache.loadActiveSessionSnapshot().isEmpty());
+
+        cache.save("uid-1", "alice@example.com", sampleSnapshot("Netflix"));
+        assertTrue(cache.hasActiveSessionSnapshot());
+        CachedSnapshot active = cache.loadActiveSessionSnapshot().orElseThrow();
+        assertEquals("uid-1", active.userId());
+        assertEquals("alice@example.com", active.email());
+
+        // Switching accounts updates active session to the newly signed-in user
+        cache.save("uid-2", "bob@example.com", sampleSnapshot("Spotify"));
+        CachedSnapshot switched = cache.loadActiveSessionSnapshot().orElseThrow();
+        assertEquals("uid-2", switched.userId());
+        assertEquals("Spotify", switched.snapshot().subscriptions().get(0).name());
+
+        // Explicit sign-out wipes active session state and all cached private snapshots
+        cache.clearSessionOnSignOut();
+        assertFalse(cache.hasActiveSessionSnapshot());
+        assertTrue(cache.loadActiveSessionSnapshot().isEmpty());
+        assertFalse(cache.hasAnySnapshot());
+        assertTrue(cache.loadByUserId("uid-1").isEmpty());
+        assertTrue(cache.loadByUserId("uid-2").isEmpty());
+    }
+
+    @Test
+    void legacyCacheWithoutActiveSessionStateFailsClosed(@TempDir Path tempDir) throws Exception {
+        Path dbFile = tempDir.resolve("legacy-cache.db");
+        LocalSnapshotCache cache = new LocalSnapshotCache(dbFile);
+        cache.save("uid-legacy", "legacy@example.com", sampleSnapshot("Disney+"));
+        assertTrue(cache.hasActiveSessionSnapshot());
+
+        // Simulate a legacy DB that has offline_snapshots rows but no offline_session_state row
+        try (var conn = java.sql.DriverManager.getConnection("jdbc:sqlite:" + dbFile.toAbsolutePath());
+             var st = conn.createStatement()) {
+            st.execute("DELETE FROM offline_session_state");
+        }
+
+        assertTrue(cache.hasAnySnapshot(), "Raw snapshot row still exists in legacy table");
+        assertFalse(cache.hasActiveSessionSnapshot(), "Missing session state must fail closed");
+        assertTrue(cache.loadActiveSessionSnapshot().isEmpty());
     }
 
     @Test

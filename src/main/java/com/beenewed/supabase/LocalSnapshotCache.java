@@ -40,6 +40,15 @@ public final class LocalSnapshotCache {
             )
             """;
 
+    private static final String CREATE_SESSION_TABLE_SQL = """
+            CREATE TABLE IF NOT EXISTS offline_session_state (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                active_user_id TEXT,
+                active_email TEXT,
+                updated_at TEXT NOT NULL
+            )
+            """;
+
     private final Path dbPath;
     private final Gson gson;
     private final Object ioLock = new Object();
@@ -68,30 +77,58 @@ public final class LocalSnapshotCache {
         return dbPath;
     }
 
-    /** Atomically saves the latest synced snapshot for a user (overwriting any previous snapshot). */
+    /**
+     * Atomically saves the latest synced snapshot for a user (overwriting any previous snapshot)
+     * and marks this user as the active offline-eligible session.
+     */
     public void save(String userId, String email, UserDataSnapshot snapshot) {
         if (userId == null || userId.isBlank() || snapshot == null) {
             return;
         }
+        String cleanUserId = userId.trim();
         String cleanEmail = (email == null || email.isBlank()) ? "Signed-in account" : email.trim();
         String json = gson.toJson(snapshot);
         String now = Instant.now().toString();
 
         synchronized (ioLock) {
             try (Connection conn = openConnection()) {
-                try (PreparedStatement ps = conn.prepareStatement("""
-                        INSERT INTO offline_snapshots (user_id, email, saved_at, payload_json)
-                        VALUES (?, ?, ?, ?)
-                        ON CONFLICT(user_id) DO UPDATE SET
-                            email = excluded.email,
-                            saved_at = excluded.saved_at,
-                            payload_json = excluded.payload_json
-                        """)) {
-                    ps.setString(1, userId.trim());
-                    ps.setString(2, cleanEmail);
-                    ps.setString(3, now);
-                    ps.setString(4, json);
-                    ps.executeUpdate();
+                conn.setAutoCommit(false);
+                try {
+                    try (PreparedStatement ps = conn.prepareStatement("""
+                            INSERT INTO offline_snapshots (user_id, email, saved_at, payload_json)
+                            VALUES (?, ?, ?, ?)
+                            ON CONFLICT(user_id) DO UPDATE SET
+                                email = excluded.email,
+                                saved_at = excluded.saved_at,
+                                payload_json = excluded.payload_json
+                            """)) {
+                        ps.setString(1, cleanUserId);
+                        ps.setString(2, cleanEmail);
+                        ps.setString(3, now);
+                        ps.setString(4, json);
+                        ps.executeUpdate();
+                    }
+                    try (PreparedStatement ps = conn.prepareStatement("""
+                            INSERT INTO offline_session_state (id, active_user_id, active_email, updated_at)
+                            VALUES (1, ?, ?, ?)
+                            ON CONFLICT(id) DO UPDATE SET
+                                active_user_id = excluded.active_user_id,
+                                active_email = excluded.active_email,
+                                updated_at = excluded.updated_at
+                            """)) {
+                        ps.setString(1, cleanUserId);
+                        ps.setString(2, cleanEmail);
+                        ps.setString(3, now);
+                        ps.executeUpdate();
+                    }
+                    conn.commit();
+                } catch (SQLException error) {
+                    try {
+                        conn.rollback();
+                    } catch (SQLException ignored) {
+                        // Ignore rollback failure
+                    }
+                    throw error;
                 }
             } catch (SQLException | IOException ignored) {
                 // Local cache write failures must never break online usage.
@@ -167,16 +204,78 @@ public final class LocalSnapshotCache {
         return loadLatest().isPresent();
     }
 
+    /**
+     * Loads the cached snapshot strictly for the currently active offline-eligible session.
+     * Returns {@link Optional#empty()} if no user has an active session (e.g. fresh install,
+     * legacy cache before session tracking, or after explicit Sign Out).
+     */
+    public Optional<CachedSnapshot> loadActiveSessionSnapshot() {
+        if (!Files.isRegularFile(dbPath)) {
+            return Optional.empty();
+        }
+        synchronized (ioLock) {
+            try (Connection conn = openConnection();
+                 PreparedStatement ps = conn.prepareStatement("""
+                         SELECT s.user_id, s.email, s.saved_at, s.payload_json
+                         FROM offline_session_state st
+                         INNER JOIN offline_snapshots s ON s.user_id = st.active_user_id
+                         WHERE st.id = 1
+                           AND st.active_user_id IS NOT NULL
+                           AND trim(st.active_user_id) <> ''
+                         LIMIT 1
+                         """);
+                 ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return parseRow(rs);
+                }
+            } catch (SQLException | IOException | RuntimeException ignored) {
+                return Optional.empty();
+            }
+        }
+        return Optional.empty();
+    }
+
+    /** True only when an active local session exists with a valid cached snapshot. */
+    public boolean hasActiveSessionSnapshot() {
+        return loadActiveSessionSnapshot().isPresent();
+    }
+
+    /**
+     * Clears the active offline session state and purges all cached snapshots on explicit Sign Out
+     * so relaunching the app offline cannot bypass authentication or expose private account data.
+     */
+    public void clearSessionOnSignOut() {
+        clearAll();
+    }
+
     public void clearForUser(String userId) {
         if (userId == null || userId.isBlank() || !Files.isRegularFile(dbPath)) {
             return;
         }
+        String cleanUserId = userId.trim();
         synchronized (ioLock) {
-            try (Connection conn = openConnection();
-                 PreparedStatement ps = conn.prepareStatement(
-                         "DELETE FROM offline_snapshots WHERE user_id = ?")) {
-                ps.setString(1, userId.trim());
-                ps.executeUpdate();
+            try (Connection conn = openConnection()) {
+                conn.setAutoCommit(false);
+                try {
+                    try (PreparedStatement ps = conn.prepareStatement(
+                            "DELETE FROM offline_snapshots WHERE user_id = ?")) {
+                        ps.setString(1, cleanUserId);
+                        ps.executeUpdate();
+                    }
+                    try (PreparedStatement ps = conn.prepareStatement(
+                            "DELETE FROM offline_session_state WHERE id = 1 AND active_user_id = ?")) {
+                        ps.setString(1, cleanUserId);
+                        ps.executeUpdate();
+                    }
+                    conn.commit();
+                } catch (SQLException error) {
+                    try {
+                        conn.rollback();
+                    } catch (SQLException ignored) {
+                        // Ignore rollback failure
+                    }
+                    throw error;
+                }
             } catch (SQLException | IOException ignored) {
                 // Best-effort cleanup
             }
@@ -188,9 +287,24 @@ public final class LocalSnapshotCache {
             return;
         }
         synchronized (ioLock) {
-            try (Connection conn = openConnection();
-                 PreparedStatement ps = conn.prepareStatement("DELETE FROM offline_snapshots")) {
-                ps.executeUpdate();
+            try (Connection conn = openConnection()) {
+                conn.setAutoCommit(false);
+                try {
+                    try (PreparedStatement ps = conn.prepareStatement("DELETE FROM offline_session_state")) {
+                        ps.executeUpdate();
+                    }
+                    try (PreparedStatement ps = conn.prepareStatement("DELETE FROM offline_snapshots")) {
+                        ps.executeUpdate();
+                    }
+                    conn.commit();
+                } catch (SQLException error) {
+                    try {
+                        conn.rollback();
+                    } catch (SQLException ignored) {
+                        // Ignore rollback failure
+                    }
+                    throw error;
+                }
             } catch (SQLException | IOException ignored) {
                 // Best-effort cleanup
             }
@@ -227,6 +341,7 @@ public final class LocalSnapshotCache {
         try (Statement st = conn.createStatement()) {
             st.execute("PRAGMA busy_timeout = 3000");
             st.execute(CREATE_TABLE_SQL);
+            st.execute(CREATE_SESSION_TABLE_SQL);
         }
         return conn;
     }

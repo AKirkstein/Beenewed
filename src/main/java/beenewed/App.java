@@ -113,13 +113,34 @@ public class App extends JFrame {
         return email == null || email.isBlank() ? "Signed-in account" : email;
     }
 
-    /** Clears the active Supabase session, hides the main window, and reopens the login dialog. */
-    public void logout() {
+    /** Invalidates local offline cache/session state and clears the active in-memory session. */
+    void clearSessionForSignOut() {
         closeProfileMenu();
+        // Purge persisted offline snapshots and active session state so relaunching offline
+        // cannot bypass authentication or expose private account data.
+        if (localCache != null) {
+            localCache.clearSessionOnSignOut();
+        }
         // Clears the in-memory session immediately; the server-side revoke runs asynchronously
         // (the JVM stays alive for the login dialog, so the request completes).
         authService.signOut();
         Store.reset();
+    }
+
+    /** Clears the active Supabase session and local offline cache, hides the main window, and reopens login. */
+    public void logout() {
+        clearSessionForSignOut();
+        closeWindowAndReopenLogin();
+    }
+
+    /** Returns to the login dialog from offline read-only mode without clearing the active offline session. */
+    private void reopenLoginOnline() {
+        closeProfileMenu();
+        Store.reset();
+        closeWindowAndReopenLogin();
+    }
+
+    private void closeWindowAndReopenLogin() {
         setVisible(false);
         dispose();
         instance = null;
@@ -133,7 +154,7 @@ public class App extends JFrame {
     public void confirmAndLogout() {
         int choice = JOptionPane.showConfirmDialog(
                 this,
-                "Sign out of Beenewed?\nYou will need to sign in again to access your subscriptions.",
+                "Sign out of Beenewed?\nYour local offline cache will be cleared and you will need a network connection to sign in again.",
                 "Sign Out",
                 JOptionPane.OK_CANCEL_OPTION,
                 JOptionPane.QUESTION_MESSAGE);
@@ -182,7 +203,7 @@ public class App extends JFrame {
     /** Re-fetches all user data from Supabase in the background, then refreshes the screen. */
     private void refreshDataFromServer() {
         if (!authService.isAuthenticated()) {
-            logout();
+            reopenLoginOnline();
             return;
         }
         reconnecting = true;
@@ -652,7 +673,7 @@ public class App extends JFrame {
                 localCache,
                 cached -> Store.initializeOffline(restClient, localCache, cached));
         boolean loggedIn = loginDialog.showDialog();
-        boolean offlineBoot = loginDialog.isOfflineOpened();
+        boolean offlineBoot = loginDialog.isOfflineOpened() && Store.isInitialized();
         if ((!loggedIn || !authService.isAuthenticated()) && !offlineBoot) {
             authService.close();
             restClient.close();

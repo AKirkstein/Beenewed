@@ -352,6 +352,35 @@ public final class SupabaseAuthService implements AutoCloseable {
         return refreshScheduler.isShutdown();
     }
 
+    /**
+     * Performs a lightweight connectivity probe against the configured Supabase Auth endpoint.
+     * Any HTTP response proves the server is reachable; network/IO failures return {@code false}.
+     */
+    public boolean isServerReachable() {
+        return isServerReachable(Duration.ofSeconds(3));
+    }
+
+    public boolean isServerReachable(Duration timeout) {
+        Duration effectiveTimeout = (timeout == null || timeout.isNegative() || timeout.isZero())
+                ? Duration.ofSeconds(3)
+                : timeout;
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(config.url() + "/auth/v1/health"))
+                .timeout(effectiveTimeout)
+                .header("apikey", config.anonKey())
+                .GET()
+                .build();
+        try {
+            http.send(request, HttpResponse.BodyHandlers.discarding());
+            return true;
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            return false;
+        } catch (IOException | RuntimeException error) {
+            return false;
+        }
+    }
+
     // ---------------------------------------------------------------------
     // Session accessors
     // ---------------------------------------------------------------------

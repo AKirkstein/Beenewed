@@ -171,11 +171,13 @@ public final class Store {
 
     private Optional<LocalSnapshotCache.CachedSnapshot> findFallbackSnapshot(String userId, String email) {
         if (localCache == null) return Optional.empty();
-        Optional<LocalSnapshotCache.CachedSnapshot> byId = localCache.loadByUserId(userId);
-        if (byId.isPresent()) return byId;
-        Optional<LocalSnapshotCache.CachedSnapshot> byEmail = localCache.loadByEmail(email);
-        if (byEmail.isPresent()) return byEmail;
-        return localCache.loadLatest();
+        if (userId != null && !userId.isBlank()) {
+            return localCache.loadByUserId(userId);
+        }
+        if (email != null && !email.isBlank()) {
+            return localCache.loadByEmail(email);
+        }
+        return Optional.empty();
     }
 
     public void onChange(Runnable listener) {
@@ -207,6 +209,10 @@ public final class Store {
 
     public Instant getLastSyncedAt() {
         return lastSyncedAt;
+    }
+
+    public String getCachedUserId() {
+        return cacheUserId;
     }
 
     public String getCachedUserEmail() {
