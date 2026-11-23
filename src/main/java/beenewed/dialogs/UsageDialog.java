@@ -54,7 +54,7 @@ public class UsageDialog extends BaseDialog {
     @Override protected Runnable prepareSave() {
         boolean ok = true;
         LocalDate d = date.getDate();
-        fDate.error(date.isBlank() ? "Usage date is required." : d == null ? "Enter a valid date (mm/dd/yyyy)." : null);
+        fDate.error(date.isBlank() ? "Usage date is required." : d == null ? "Enter a valid date (MM/dd/yyyy or yyyy-MM-dd)." : null);
         ok &= d != null;
 
         Double q = null;

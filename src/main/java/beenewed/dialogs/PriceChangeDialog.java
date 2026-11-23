@@ -1,10 +1,12 @@
 package beenewed.dialogs;
 
+import beenewed.model.BillingRules;
 import beenewed.model.Models.*;
 import beenewed.model.Store;
 import beenewed.ui.*;
 
 import javax.swing.*;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 
 /** D6 \u2014 Record a price change (updates the current price and adds a Price History entry). */
@@ -22,7 +24,7 @@ public class PriceChangeDialog extends BaseDialog {
         this.sub = sub;
 
         place(linkedContext(sub, true)); gap(14);
-        previous.setText(Theme.num(sub.price));
+        previous.setText(BillingRules.money(sub.price).toPlainString());
         previous.setEnabled(false);
         Field fPrev = new Field("Previous Price", false, null, previous, "Current recorded price before this change.");
         fNew = new Field("New Price", true, null, newPrice, "Enter the updated subscription price.");
@@ -37,16 +39,21 @@ public class PriceChangeDialog extends BaseDialog {
 
     @Override protected Runnable prepareSave() {
         boolean ok = true;
-        Double p = parseAmount(newPrice.getText());
-        String err = p == null ? "Enter an amount greater than zero." : Math.abs(p - sub.price) < 0.001 ? "The new price is the same as the current price." : null;
+        BigDecimal p = parsePositiveAmount(newPrice.getText());
+        String err = p == null
+                ? "Enter a valid positive amount (e.g., 899.00)."
+                : p.compareTo(BillingRules.money(sub.price)) == 0
+                        ? "The new price is the same as the current price."
+                        : null;
         fNew.error(err);
         ok &= err == null;
         LocalDate d = date.getDate();
-        fDate.error(date.isBlank() ? "Effective date is required." : d == null ? "Enter a valid date (mm/dd/yyyy)." : null);
+        fDate.error(date.isBlank() ? "Effective date is required." : d == null ? "Enter a valid date (MM/dd/yyyy or yyyy-MM-dd)." : null);
         ok &= d != null;
-        if (!ok) return null;
+        if (!ok) { refit(); return null; }
         String n = notes.getText().trim();
         String reason = n.isEmpty() ? null : n;
-        return () -> Store.get().recordPriceChange(sub, d, p, reason);
+        double newPriceVal = p.doubleValue();
+        return () -> Store.get().recordPriceChange(sub, d, newPriceVal, reason);
     }
 }

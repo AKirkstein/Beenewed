@@ -40,6 +40,7 @@ public class App extends JFrame {
     private RenewalsScreen renewals;
     private ReportsScreen reports;
     private SettingsScreen settings;
+    private UI.Btn bellButton;
     private JLabel bellBadge;
     private final SupabaseAuthService authService;
     private final SupabaseRestClient restClient;
@@ -228,7 +229,8 @@ public class App extends JFrame {
         UI.ThemeSwitch themeSwitch = new UI.ThemeSwitch(Theme.isDark(), this::setDarkMode);
 
         // Bell with a small count badge (renewal reminders)
-        UI.Btn bell = UI.iconButton(Icons.Type.BELL, this::showReminders);
+        bellButton = UI.iconButton(Icons.Type.BELL, this::showReminders);
+        UI.Btn bell = bellButton;
         bell.setIcon(Icons.of(Icons.Type.BELL, 18, Theme.TEXT_2));
         bell.setToolTipText("Renewal reminders");
         bellBadge = new JLabel("", SwingConstants.CENTER) {
@@ -327,10 +329,17 @@ public class App extends JFrame {
 
     private void updateBell() {
         if (bellBadge == null) return;
-        Store st = Store.get();
-        int n = st.upcomingReminders().size() + (st.showOverdue ? st.overdue().size() : 0);
-        bellBadge.setText(n > 9 ? "9+" : String.valueOf(n));
+        int n = Store.get().activeReminderCount();
+        bellBadge.setText(n > 9 ? "9+" : n > 0 ? String.valueOf(n) : "");
         bellBadge.setVisible(n > 0);
+        if (bellButton != null) {
+            bellButton.setToolTipText(n > 0 ? "Renewal reminders (" + n + ")" : "Renewal reminders");
+        }
+    }
+
+    /** Package-private accessor used by UI tests to inspect notification badge state. */
+    JLabel bellBadgeForTest() {
+        return bellBadge;
     }
 
     // ---- Light / Dark mode ---------------------------------------------
@@ -500,8 +509,8 @@ public class App extends JFrame {
     // ---- Dialog shortcuts ---------------------------------------------
     public void addSubscription()                    { new SubscriptionDialog(this, null).open(); }
     public void editSubscription(Subscription s)     { new SubscriptionDialog(this, s).open(); }
-    public void recordPayment(Subscription s)        { new PaymentDialog(this, null, s).open(); }
-    public void editPayment(Payment p)               { new PaymentDialog(this, p, p.sub).open(); }
+    public void recordPayment(Subscription s)        { new PaymentDialog(this, s).open(); }
+    public void viewPayment(Payment p)               { PaymentDialog.viewReceipt(this, p).open(); }
     public void changeStatus(Subscription s)         { new StatusDialog(this, s, null).open(); }
     public void showReminders()                      { new RemindersDialog(this).open(); }
 

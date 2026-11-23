@@ -196,9 +196,14 @@ public class SettingsScreen extends JPanel {
         for (int i = 0; i < WINDOW_DAYS.length; i++) if (WINDOW_DAYS[i] == st.remindDays) idx = i;
         remind.setSelectedIndex(idx);
         overdue.setOn(st.showOverdue);
-        int n = st.upcomingReminders().size() + (st.showOverdue ? st.overdue().size() : 0);
+        int upcomingCount = st.upcomingReminders().size();
+        int overdueCount = st.showOverdue ? st.overdue().size() : 0;
+        int n = st.activeReminderCount();
         viewReminders.setText("View Reminders (" + n + ")");
-        reminderHint.setText("<html>Opens reminder dialog: " + st.upcomingReminders().size() + " upcoming renewal" + (st.upcomingReminders().size() == 1 ? "" : "s") + " within " + st.remindDays + " days.</html>");
+        String hint = overdueCount > 0
+                ? upcomingCount + " upcoming within " + st.remindDays + " days and " + overdueCount + " overdue."
+                : upcomingCount + " upcoming renewal" + (upcomingCount == 1 ? "" : "s") + " within " + st.remindDays + " days.";
+        reminderHint.setText("<html>Opens reminder dialog: " + hint + "</html>");
         savedMsg.setText("Preferences are synced to your account.");
         savedMsg.setForeground(Theme.MUTED);
         if (App.get() != null) {

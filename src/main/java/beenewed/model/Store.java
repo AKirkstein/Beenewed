@@ -18,10 +18,13 @@ import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * UI-facing model adapter with an in-memory cache backed by Supabase PostgREST.
@@ -70,9 +73,18 @@ public final class Store {
     private String currency = "PHP";
     private com.beenewed.backend.model.Theme theme = com.beenewed.backend.model.Theme.LIGHT;
 
+    public enum ReminderKind {
+        UPCOMING,
+        OVERDUE
+    }
+
+    /** Identifies a specific reminder occurrence so viewed state resets on new due dates or state changes. */
+    public record ReminderKey(int subscriptionId, LocalDate dueDate, ReminderKind kind) {}
+
     private final Object cacheLock = new Object();
     private final SupabaseRestClient supabase;
     private final List<Runnable> listeners = new ArrayList<>();
+    private final Set<ReminderKey> viewedReminders = new HashSet<>();
 
     private Store(SupabaseRestClient supabase) {
         this.supabase = Objects.requireNonNull(supabase, "supabase must not be null");
@@ -146,6 +158,7 @@ public final class Store {
                 members.removeIf(m -> m.sub.id == subscription.id);
                 usages.removeIf(u -> u.sub.id == subscription.id);
                 priceChanges.removeIf(pc -> pc.sub.id == subscription.id);
+                viewedReminders.removeIf(k -> k.subscriptionId() == subscription.id);
             }
             return null;
         });
@@ -186,13 +199,69 @@ public final class Store {
     }
 
     public void recordPayment(Payment payment) {
+        Objects.requireNonNull(payment, "payment must not be null");
+        if (payment.sub == null) {
+            throw new ValidationException("Subscription is required for a payment.");
+        }
         withBackend(() -> {
+            Subscription snapshotSub;
+            LocalDate nextRenewalToSave;
+            String encodedNotes;
+            synchronized (cacheLock) {
+                Subscription existingSub = findCachedSubscription(payment.sub.id);
+                if (existingSub == null) {
+                    throw new NotFoundException("Subscription not found: " + payment.sub.id);
+                }
+                if (existingSub.status == Status.CANCELLED) {
+                    throw new ValidationException("Cannot record a payment for a cancelled subscription.");
+                }
+                if (payment.period == null || payment.period.isBlank()) {
+                    throw new ValidationException("Renewal period is required.");
+                }
+                BillingRules.findDuplicatePayment(existingSub, payment.period, payments).ifPresent(dup -> {
+                    throw new ValidationException("A payment for " + existingSub.name
+                            + " in renewal period \"" + payment.period.trim() + "\" has already been recorded.");
+                });
+
+                List<Member> subMembers = membersForLocked(existingSub.id);
+                BigDecimal payAmount = money(payment.amount);
+                BigDecimal subPrice = money(existingSub.price);
+                Set<BigDecimal> allowedShares = SplitAllocator.allowedSplitShares(existingSub, subMembers);
+                BillingRules.validatePaymentAmount(payAmount, subPrice, allowedShares);
+
+                snapshotSub = existingSub;
+                nextRenewalToSave = existingSub.status == Status.ACTIVE
+                        ? BillingRules.advanceNextDueDate(existingSub.nextRenewal, existingSub.cycle)
+                        : null;
+                encodedNotes = attachSplitSnapshotIfNeeded(payment.notes, existingSub, subMembers, payAmount, subPrice);
+            }
+
+            Payment toPersist = new Payment(
+                    0,
+                    snapshotSub,
+                    payment.date,
+                    payment.amount,
+                    payment.period.trim(),
+                    payment.method,
+                    encodedNotes);
             com.beenewed.backend.model.Payment created =
-                    supabase.recordPayment(toBackendPayment(payment, null));
+                    supabase.recordPayment(toBackendPayment(toPersist, null));
+
+            com.beenewed.backend.model.Subscription updatedSub = null;
+            if (nextRenewalToSave != null) {
+                updatedSub = supabase.updateSubscriptionStatus(
+                        (long) snapshotSub.id,
+                        com.beenewed.backend.model.SubscriptionStatus.valueOf(snapshotSub.status.name()),
+                        nextRenewalToSave);
+            }
+
             synchronized (cacheLock) {
                 Subscription sub = requireMapped(
                         findCachedSubscription(Math.toIntExact(created.subscriptionId())),
                         "Subscription for payment " + created.id());
+                if (updatedSub != null) {
+                    applySubscription(sub, updatedSub);
+                }
                 Payment mapped = new Payment(
                         Math.toIntExact(created.id()),
                         sub,
@@ -203,62 +272,31 @@ public final class Store {
                         created.notes());
                 payments.add(mapped);
                 sortPayments();
+                sortSubscriptions();
             }
             return null;
         });
     }
 
+    /** Recorded payments form an immutable financial ledger and cannot be edited post-recording. */
     public void updatePayment(Payment payment) {
-        withBackend(() -> {
-            BigDecimal newAmount = money(payment.amount);
-            synchronized (cacheLock) {
-                Payment existing = findCachedPayment(payment.id);
-                if (existing == null) {
-                    throw new NotFoundException("Payment not found: " + payment.id);
-                }
-                BigDecimal contributionTotal = sumContributionsForPayment(payment.id);
-                if (existing.sub.id != payment.sub.id && contributionTotal.signum() > 0) {
-                    throw new ValidationException("A payment with contributions cannot be moved to another subscription");
-                }
-                if (contributionTotal.compareTo(newAmount) > 0) {
-                    throw new ValidationException("Payment amount cannot be less than its total contributions");
-                }
-            }
-            com.beenewed.backend.model.Payment updated =
-                    supabase.updatePayment(toBackendPayment(payment, payment.id));
-            synchronized (cacheLock) {
-                Subscription sub = requireMapped(
-                        findCachedSubscription(Math.toIntExact(updated.subscriptionId())),
-                        "Subscription for payment " + updated.id());
-                Payment cached = findCachedPayment(payment.id);
-                if (cached != null) {
-                    cached.sub = sub;
-                    cached.date = updated.paymentDate();
-                    cached.amount = updated.amountPaid().doubleValue();
-                    cached.period = updated.renewalPeriod();
-                    cached.method = updated.paymentMethod();
-                    cached.notes = updated.notes();
-                }
-                sortPayments();
-            }
-            return null;
-        });
+        throw new ValidationException("Recorded payments are part of an immutable ledger and cannot be edited.");
     }
 
+    /** Recorded payments form an immutable financial ledger and cannot be deleted post-recording. */
     public void deletePayment(Payment payment) {
-        withBackend(() -> {
-            supabase.deletePayment((long) payment.id);
-            synchronized (cacheLock) {
-                payments.removeIf(p -> p.id == payment.id);
-            }
-            return null;
-        });
+        throw new ValidationException("Recorded payments are part of an immutable ledger and cannot be deleted.");
     }
 
     public void addMember(Member member) {
         withBackend(() -> {
+            boolean promotePayer = SplitAllocator.parseMemberMeta(member.notes).payer();
+            List<Member> demoteTargets = promotePayer ? collectOtherPayers(member.sub.id, -1) : List.of();
             com.beenewed.backend.model.Member created =
                     supabase.addMember((long) member.sub.id, toBackendMember(member, null));
+            for (Member other : demoteTargets) {
+                demoteOtherPayer(other);
+            }
             synchronized (cacheLock) {
                 Subscription sub = requireMapped(
                         findCachedSubscription(Math.toIntExact(created.subscriptionId())),
@@ -276,13 +314,86 @@ public final class Store {
 
     public void updateMember(Member member) {
         withBackend(() -> {
+            boolean promotePayer = SplitAllocator.parseMemberMeta(member.notes).payer();
+            List<Member> demoteTargets = promotePayer ? collectOtherPayers(member.sub.id, member.id) : List.of();
             com.beenewed.backend.model.Member updated =
                     supabase.updateMember((long) member.sub.id, toBackendMember(member, member.id));
+            for (Member other : demoteTargets) {
+                demoteOtherPayer(other);
+            }
             synchronized (cacheLock) {
                 Member cached = findCachedMember(member.id);
                 if (cached != null) {
                     cached.name = updated.name();
                     cached.notes = updated.roleNotes();
+                }
+                sortMembers();
+            }
+            return null;
+        });
+    }
+
+    /**
+     * Validates and persists a subscription's family split configuration (designated payer,
+     * owner inclusion, and equal vs. custom per-member allocations) using zero-migration metadata.
+     */
+    public void saveSplitConfiguration(
+            Subscription subscription,
+            String payerKey,
+            boolean includeOwner,
+            SplitAllocator.SplitMode mode,
+            Map<String, BigDecimal> customAllocations) {
+        Objects.requireNonNull(subscription, "subscription must not be null");
+        Objects.requireNonNull(mode, "split mode must not be null");
+        withBackend(() -> {
+            List<Member> subMembers;
+            BigDecimal subPrice;
+            synchronized (cacheLock) {
+                Subscription existing = findCachedSubscription(subscription.id);
+                if (existing == null) {
+                    throw new NotFoundException("Subscription not found: " + subscription.id);
+                }
+                subMembers = membersForLocked(existing.id);
+                subPrice = money(existing.price);
+            }
+            if (subMembers.isEmpty()) {
+                throw new ValidationException("Add at least one shared member before configuring splits.");
+            }
+            if (!includeOwner && subMembers.isEmpty()) {
+                throw new ValidationException("At least one participant must be included in the split.");
+            }
+            if (mode == SplitAllocator.SplitMode.CUSTOM) {
+                SplitAllocator.validateCustomSplits(subPrice, customAllocations);
+            }
+
+            List<Member> toUpdate = new ArrayList<>(subMembers.size());
+            for (Member m : subMembers) {
+                String key = SplitAllocator.memberKey(m.id);
+                boolean isPayer = key.equals(payerKey);
+                BigDecimal customShare = mode == SplitAllocator.SplitMode.CUSTOM && customAllocations != null
+                        ? customAllocations.get(key)
+                        : null;
+                SplitAllocator.MemberSplitMeta meta = new SplitAllocator.MemberSplitMeta(
+                        isPayer,
+                        customShare,
+                        includeOwner,
+                        mode);
+                String encoded = SplitAllocator.encodeMemberNotes(m.notes, meta);
+                toUpdate.add(new Member(m.id, m.sub, m.name, encoded));
+            }
+
+            List<com.beenewed.backend.model.Member> savedRecords = new ArrayList<>(toUpdate.size());
+            for (Member m : toUpdate) {
+                savedRecords.add(supabase.updateMember((long) m.sub.id, toBackendMember(m, m.id)));
+            }
+
+            synchronized (cacheLock) {
+                for (com.beenewed.backend.model.Member saved : savedRecords) {
+                    Member cached = findCachedMember(Math.toIntExact(saved.id()));
+                    if (cached != null) {
+                        cached.name = saved.name();
+                        cached.notes = saved.roleNotes();
+                    }
                 }
                 sortMembers();
             }
@@ -627,7 +738,7 @@ public final class Store {
                             || containsIgnoreCase(p.sub.category, lowerNeedle)
                             || containsIgnoreCase(p.period, lowerNeedle)
                             || containsIgnoreCase(p.method, lowerNeedle)
-                            || containsIgnoreCase(p.notes, lowerNeedle);
+                            || containsIgnoreCase(SplitAllocator.cleanNotes(p.notes), lowerNeedle);
                     if (!matches) {
                         continue;
                     }
@@ -666,16 +777,109 @@ public final class Store {
 
     public List<Member> membersFor(Subscription subscription) {
         synchronized (cacheLock) {
-            List<Member> result = new ArrayList<>();
-            for (Member m : members) {
-                if (m.sub.id == subscription.id) {
-                    result.add(m);
+            return membersForLocked(subscription.id);
+        }
+    }
+
+    private List<Member> membersForLocked(int subscriptionId) {
+        List<Member> result = new ArrayList<>();
+        for (Member m : members) {
+            if (m.sub.id == subscriptionId) {
+                result.add(m);
+            }
+        }
+        result.sort(Comparator.comparing((Member m) -> m.name, String.CASE_INSENSITIVE_ORDER)
+                .thenComparingInt(m -> m.id));
+        return result;
+    }
+
+    public SplitAllocator.SplitConfig splitConfigFor(Subscription subscription) {
+        synchronized (cacheLock) {
+            Subscription sub = findCachedSubscription(subscription.id);
+            Subscription target = sub != null ? sub : subscription;
+            return SplitAllocator.resolveSubscriptionSplit(target, membersForLocked(target.id));
+        }
+    }
+
+    public List<Contribution> contributionsForPayment(int paymentId) {
+        synchronized (cacheLock) {
+            List<Contribution> result = new ArrayList<>();
+            for (Contribution c : contributions) {
+                if (c.payment != null && c.payment.id == paymentId) {
+                    result.add(c);
                 }
             }
-            result.sort(Comparator.comparing((Member m) -> m.name, String.CASE_INSENSITIVE_ORDER)
-                    .thenComparingInt(m -> m.id));
+            result.sort(Comparator.comparing(c -> c.date));
             return result;
         }
+    }
+
+    public SplitAllocator.DistributionSummary distributionFor(Payment payment) {
+        synchronized (cacheLock) {
+            List<Member> subMembers = membersForLocked(payment.sub.id);
+            List<Contribution> paymentContribs = new ArrayList<>();
+            for (Contribution c : contributions) {
+                if (c.payment != null && c.payment.id == payment.id) {
+                    paymentContribs.add(c);
+                }
+            }
+            return SplitAllocator.computeDistribution(payment, subMembers, paymentContribs);
+        }
+    }
+
+    private List<Member> collectOtherPayers(int subscriptionId, int excludeMemberId) {
+        synchronized (cacheLock) {
+            List<Member> others = new ArrayList<>();
+            for (Member m : membersForLocked(subscriptionId)) {
+                if (m.id == excludeMemberId) continue;
+                if (SplitAllocator.parseMemberMeta(m.notes).payer()) {
+                    others.add(m);
+                }
+            }
+            return others;
+        }
+    }
+
+    private void demoteOtherPayer(Member other) {
+        SplitAllocator.MemberSplitMeta oldMeta = SplitAllocator.parseMemberMeta(other.notes);
+        SplitAllocator.MemberSplitMeta cleared = new SplitAllocator.MemberSplitMeta(
+                false, oldMeta.customShare(), oldMeta.includeOwner(), oldMeta.mode());
+        String encoded = SplitAllocator.encodeMemberNotes(other.notes, cleared);
+        Member updated = new Member(other.id, other.sub, other.name, encoded);
+        com.beenewed.backend.model.Member saved =
+                supabase.updateMember((long) other.sub.id, toBackendMember(updated, other.id));
+        synchronized (cacheLock) {
+            Member cached = findCachedMember(other.id);
+            if (cached != null) {
+                cached.notes = saved.roleNotes();
+            }
+        }
+    }
+
+    private static String attachSplitSnapshotIfNeeded(
+            String rawNotes,
+            Subscription sub,
+            List<Member> subMembers,
+            BigDecimal payAmount,
+            BigDecimal subPrice) {
+        SplitAllocator.PaymentSplitMeta existing = SplitAllocator.parsePaymentMeta(rawNotes);
+        if (existing.payerKey() != null || !existing.shareSnapshot().isEmpty() || existing.splitShareOnly()) {
+            return rawNotes;
+        }
+        if (subMembers.isEmpty()) {
+            return rawNotes;
+        }
+        SplitAllocator.SplitConfig config = SplitAllocator.resolveSubscriptionSplit(sub, subMembers);
+        boolean splitOnly = payAmount.compareTo(subPrice) != 0;
+        Map<String, BigDecimal> snapshot = new LinkedHashMap<>();
+        if (!splitOnly) {
+            for (SplitAllocator.ParticipantShare ps : config.shares()) {
+                snapshot.put(ps.participant().key(), ps.share());
+            }
+        }
+        SplitAllocator.PaymentSplitMeta meta = new SplitAllocator.PaymentSplitMeta(
+                config.payerKey(), splitOnly, snapshot);
+        return SplitAllocator.encodePaymentNotes(rawNotes, meta);
     }
 
     public List<Contribution> contributionsFor(Subscription subscription) {
@@ -790,15 +994,43 @@ public final class Store {
     }
 
     public List<Subscription> upcomingReminders(DashboardService.DashboardSummary summary) {
-        return reminders(summary.upcomingRenewals());
+        return reminders(summary.upcomingRenewals(), ReminderKind.UPCOMING);
     }
 
     public List<Subscription> overdue() {
-        return reminders(dashboardSummary().overdueRenewals());
+        return overdue(dashboardSummary());
     }
 
     public List<Subscription> overdue(DashboardService.DashboardSummary summary) {
-        return reminders(summary.overdueRenewals());
+        return reminders(summary.overdueRenewals(), ReminderKind.OVERDUE);
+    }
+
+    /** Marks the current reminder notification as viewed/acknowledged for this session. */
+    public void markReminderViewed(Subscription subscription, ReminderKind kind) {
+        if (subscription == null || subscription.nextRenewal == null || kind == null) {
+            return;
+        }
+        synchronized (cacheLock) {
+            viewedReminders.add(new ReminderKey(subscription.id, subscription.nextRenewal, kind));
+        }
+    }
+
+    public boolean isReminderViewed(Subscription subscription, ReminderKind kind) {
+        if (subscription == null || subscription.nextRenewal == null || kind == null) {
+            return false;
+        }
+        synchronized (cacheLock) {
+            return viewedReminders.contains(new ReminderKey(subscription.id, subscription.nextRenewal, kind));
+        }
+    }
+
+    /** Total count of unviewed active reminders (upcoming + overdue when overdue alerts are enabled). */
+    public int activeReminderCount() {
+        synchronized (cacheLock) {
+            DashboardService.DashboardSummary summary = dashboardSummary();
+            return upcomingReminders(summary).size()
+                    + (showOverdue ? overdue(summary).size() : 0);
+        }
     }
 
     public ReportService.ActualPaidReport actualPaidForRange(LocalDate startDate, LocalDate endDate) {
@@ -993,13 +1225,13 @@ public final class Store {
                 activeCount, monthlyTotal, annualTotal, byCategory, subscriptionEstimates);
     }
 
-    private List<Subscription> reminders(List<DashboardService.RenewalReminder> reminders) {
+    private List<Subscription> reminders(List<DashboardService.RenewalReminder> reminders, ReminderKind kind) {
         synchronized (cacheLock) {
             Map<Integer, Subscription> cached = indexSubscriptions();
             List<Subscription> result = new ArrayList<>();
             for (DashboardService.RenewalReminder reminder : reminders) {
                 Subscription sub = cached.get(Math.toIntExact(reminder.subscriptionId()));
-                if (sub != null) {
+                if (sub != null && !viewedReminders.contains(new ReminderKey(sub.id, sub.nextRenewal, kind))) {
                     result.add(sub);
                 }
             }

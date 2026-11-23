@@ -14,6 +14,7 @@ import java.util.Locale;
 /** Date input (mm/dd/yyyy) with a calendar button that opens a month picker. */
 public class DateField extends JPanel {
     private final UI.TextField field;
+    private final JButton cal;
     private final JPopupMenu popup = new JPopupMenu();
     private YearMonth shown = YearMonth.now();
 
@@ -23,11 +24,12 @@ public class DateField extends JPanel {
         setBorder(new UI.FieldBorder(0, 0));
         field = new UI.TextField(placeholder == null ? "mm/dd/yyyy" : placeholder);
         field.setBorder(new EmptyBorder(9, 12, 9, 4));
+        InputFilters.installDateFilter(field);
         field.addFocusListener(new FocusAdapter() {
             public void focusGained(FocusEvent e) { DateField.this.repaint(); }
             public void focusLost(FocusEvent e) { DateField.this.repaint(); }
         });
-        JButton cal = new JButton(Icons.of(Icons.Type.CALENDAR, 16, Theme.MUTED));
+        cal = new JButton(Icons.of(Icons.Type.CALENDAR, 16, Theme.MUTED));
         cal.setBorder(new EmptyBorder(0, 6, 0, 10));
         cal.setContentAreaFilled(false);
         cal.setFocusPainted(false);
@@ -39,24 +41,40 @@ public class DateField extends JPanel {
         popup.setBorder(BorderFactory.createLineBorder(Theme.BORDER));
     }
 
+    @Override
+    public void setEnabled(boolean enabled) {
+        super.setEnabled(enabled);
+        field.setEnabled(enabled);
+        field.setEditable(enabled);
+        field.setFocusable(enabled);
+        field.setDisabledTextColor(Theme.MUTED);
+        cal.setEnabled(enabled);
+        cal.setFocusable(enabled);
+        cal.setCursor(Cursor.getPredefinedCursor(enabled ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
+        cal.setToolTipText(enabled ? "Pick a date" : null);
+        if (!enabled) {
+            popup.setVisible(false);
+        }
+        repaint();
+    }
+
+    public boolean isPopupVisible() {
+        return popup.isVisible();
+    }
+
     @Override public Dimension getMaximumSize() { return new Dimension(Integer.MAX_VALUE, getPreferredSize().height); }
     @Override protected void paintComponent(Graphics g) { UI.paintFieldBg(this, g); super.paintComponent(g); }
 
     public void setDate(LocalDate d) { field.setText(d == null ? "" : Theme.INPUT_DATE.format(d)); }
     public boolean isBlank() { return field.getText().isBlank(); }
 
-    /** Parsed date, or null when blank or invalid. Accepts mm/dd/yyyy, yyyy-mm-dd and "Nov 25, 2026". */
+    /** Strictly parses mm/dd/yyyy, m/d/yyyy, or yyyy-mm-dd; returns null when blank or invalid. */
     public LocalDate getDate() {
-        String t = field.getText().trim();
-        if (t.isEmpty()) return null;
-        try { return LocalDate.parse(t, Theme.INPUT_DATE); } catch (DateTimeParseException ignored) {}
-        try { return LocalDate.parse(t); } catch (DateTimeParseException ignored) {}
-        try { return LocalDate.parse(t, Theme.DATE); } catch (DateTimeParseException ignored) {}
-        try { return LocalDate.parse(t, java.time.format.DateTimeFormatter.ofPattern("M/d/yyyy")); } catch (DateTimeParseException ignored) {}
-        return null;
+        return InputFilters.parseStrictDate(field.getText());
     }
 
     private void openPicker() {
+        if (!isEnabled()) return;
         LocalDate d = getDate();
         shown = YearMonth.from(d != null ? d : beenewed.model.Store.today());
         rebuild();

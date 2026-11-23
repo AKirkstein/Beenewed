@@ -152,17 +152,17 @@ public class SubscriptionDialog extends BaseDialog {
         String cat = categoryValue();
         fCategory.error(cat == null ? "Please select a category." : null);
         ok &= cat != null;
-        Double p = parseAmount(price.getText());
-        fPrice.error(p == null ? "Enter an amount greater than zero." : null);
+        java.math.BigDecimal p = parsePositiveAmount(price.getText());
+        fPrice.error(p == null ? "Enter a valid positive amount (e.g., 899.00)." : null);
         ok &= p != null;
         LocalDate d = renewal.getDate();
-        fDate.error(renewal.isBlank() ? "Next renewal date is required." : d == null ? "Enter a valid date (mm/dd/yyyy)." : null);
+        fDate.error(renewal.isBlank() ? "Next renewal date is required." : d == null ? "Enter a valid date (MM/dd/yyyy or yyyy-MM-dd)." : null);
         ok &= d != null;
-        if (!ok) { body.revalidate(); body.repaint(); return null; }
+        if (!ok) { body.revalidate(); body.repaint(); refit(); return null; }
 
         Cycle selectedCycle = cycle.selected();
         Icons.Type selectedIcon = icon;
-        double effectivePrice = editing == null ? p : editing.price;
+        double effectivePrice = editing == null ? p.doubleValue() : editing.price;
         Subscription payload = new Subscription(
                 editing == null ? 0 : editing.id,
                 n,

@@ -29,16 +29,16 @@ public class RemindersDialog extends BaseDialog {
         place(info); gap(16);
 
         List<Subscription> up = st.upcomingReminders();
-        place(section("Upcoming Renewals", up.size(), "Subscriptions approaching their next renewal date.")); gap(10);
-        if (up.isEmpty()) place(empty("No renewals within the next " + st.remindDays + " days."));
-        for (Subscription s : up) { place(item(s)); gap(8); }
+        place(section("Upcoming Renewals", up.size(), "Subscriptions approaching their next renewal date. Click View to inspect details and dismiss.")); gap(10);
+        if (up.isEmpty()) place(empty("No unviewed renewals within the next " + st.remindDays + " days."));
+        for (Subscription s : up) { place(item(s, Store.ReminderKind.UPCOMING)); gap(8); }
 
         if (st.showOverdue) {
             gap(12);
             List<Subscription> od = st.overdue();
-            place(section("Overdue Renewals", od.size(), "Saved renewal dates that have already passed. These are scheduled dates, not payment status.")); gap(10);
-            if (od.isEmpty()) place(empty("No overdue renewals. You're all caught up."));
-            for (Subscription s : od) { place(item(s)); gap(8); }
+            place(section("Overdue Renewals", od.size(), "Active subscriptions past their due date. Click View to inspect details and dismiss.")); gap(10);
+            if (od.isEmpty()) place(empty("No unviewed overdue renewals. You're all caught up."));
+            for (Subscription s : od) { place(item(s, Store.ReminderKind.OVERDUE)); gap(8); }
         }
     }
 
@@ -49,19 +49,23 @@ public class RemindersDialog extends BaseDialog {
         return p;
     }
 
-    private JComponent item(Subscription s) {
+    private JComponent item(Subscription s, Store.ReminderKind kind) {
         UI.RoundPanel p = new UI.RoundPanel(new BorderLayout(12, 0), 10, Theme.SURFACE, Theme.BORDER);
         p.setBorder(new EmptyBorder(12, 12, 12, 12));
         p.add(UI.iconBox(s.icon, 34, 17), BorderLayout.WEST);
         p.add(UI.vstack(3, UI.label(s.name, Theme.BODY_B, Theme.TEXT),
                 UI.label("Renews " + Theme.date(s.nextRenewal) + "  \u2022  Expected " + Theme.peso(s.price) + "  \u2022  " + s.cycle.label, Theme.SMALL, Theme.MUTED)), BorderLayout.CENTER);
-        UI.Btn pay = UI.link("Record Payment");
-        pay.addActionListener(e -> { close(); App.get().recordPayment(s); });
         UI.Btn view = UI.link("View");
-        view.setForeground(Theme.TEXT_2);
-        view.addActionListener(e -> { close(); App.get().openDetails(s, 0); });
+        view.addActionListener(e -> {
+            Store.get().markReminderViewed(s, kind);
+            Store.get().changed();
+            close();
+            if (App.get() != null) {
+                App.get().openDetails(s, 0);
+            }
+        });
         JPanel right = UI.clear(new GridBagLayout());
-        right.add(UI.hrow(14, Common.dueBadge(s.nextRenewal), view, pay));
+        right.add(UI.hrow(14, Common.dueBadge(s.nextRenewal), view));
         p.add(right, BorderLayout.EAST);
         p.setMaximumSize(new Dimension(Integer.MAX_VALUE, p.getPreferredSize().height));
         return p;

@@ -5,6 +5,7 @@ import beenewed.model.Store;
 import beenewed.ui.*;
 
 import javax.swing.*;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 
@@ -19,6 +20,26 @@ public class ContributionDialog extends BaseDialog {
     private final Field fMember, fPayment, fAmount, fDate;
 
     public ContributionDialog(JFrame owner, Subscription sub, Contribution c) {
+        this(owner, sub, c, null, null, null);
+    }
+
+    /** Pre-fills member, linked payment, and exact pending share (used by Group Head "Mark Paid"). */
+    public ContributionDialog(
+            JFrame owner,
+            Subscription sub,
+            Member presetMember,
+            Payment presetPayment,
+            BigDecimal presetAmount) {
+        this(owner, sub, null, presetMember, presetPayment, presetAmount);
+    }
+
+    private ContributionDialog(
+            JFrame owner,
+            Subscription sub,
+            Contribution c,
+            Member presetMember,
+            Payment presetPayment,
+            BigDecimal presetAmount) {
         super(owner, c == null ? "Record Contribution" : "Edit Contribution",
                 "Record money received from a member for an existing subscription payment.",
                 Icons.Type.CASH, "Save Contribution", Icons.Type.CHECK, 560);
@@ -54,6 +75,11 @@ public class ContributionDialog extends BaseDialog {
             amount.setText(Theme.num(c.amount).replace(",", ""));
             date.setDate(c.date);
             addDelete("contribution", () -> st.deleteContribution(c));
+        } else {
+            if (presetMember != null) member.setSelectedItem(presetMember);
+            if (presetPayment != null) payment.setSelectedItem(presetPayment);
+            if (presetAmount != null && presetAmount.signum() > 0) amount.setText(presetAmount.toPlainString());
+            date.setDate(Store.today());
         }
     }
 
@@ -65,17 +91,17 @@ public class ContributionDialog extends BaseDialog {
         boolean hasPayment = payment.getSelectedItem() instanceof Payment;
         fPayment.error(hasPayment ? null : "Select the recorded payment this contribution belongs to.");
         ok &= hasPayment;
-        Double a = parseAmount(amount.getText());
-        fAmount.error(a == null ? "Enter an amount greater than zero." : null);
+        BigDecimal a = parsePositiveAmount(amount.getText());
+        fAmount.error(a == null ? "Enter a valid positive amount (e.g., 183.00)." : null);
         ok &= a != null;
         LocalDate d = date.getDate();
-        fDate.error(date.isBlank() ? "Date received is required." : d == null ? "Enter a valid date (mm/dd/yyyy)." : null);
+        fDate.error(date.isBlank() ? "Date received is required." : d == null ? "Enter a valid date (MM/dd/yyyy or yyyy-MM-dd)." : null);
         ok &= d != null;
-        if (!ok) return null;
+        if (!ok) { refit(); return null; }
 
         Member m = (Member) member.getSelectedItem();
         Payment p = (Payment) payment.getSelectedItem();
-        Contribution payload = new Contribution(editing == null ? 0 : editing.id, sub, m, p, a, d);
+        Contribution payload = new Contribution(editing == null ? 0 : editing.id, sub, m, p, a.doubleValue(), d);
         return () -> {
             Store st = Store.get();
             if (editing == null) st.recordContribution(payload);

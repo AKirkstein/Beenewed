@@ -3,22 +3,31 @@ package beenewed.screens;
 import beenewed.App;
 import beenewed.dialogs.*;
 import beenewed.model.Models.*;
+import beenewed.model.SplitAllocator;
 import beenewed.model.Store;
 import beenewed.ui.*;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
+import java.math.BigDecimal;
 import java.util.List;
 
 /** S3 \u2014 Subscription Details with Overview, Payments, Sharing, Usage and Price History tabs. */
 public class DetailsScreen extends JPanel {
     private Subscription sub;
     private int tab = 0;
+    private int selectedDistPaymentId = -1;
 
     public DetailsScreen() { super(new BorderLayout()); setBackground(Theme.BG); }
 
-    public void setSubscription(Subscription s, int tab) { this.sub = s; this.tab = tab; }
+    public void setSubscription(Subscription s, int tab) {
+        if (this.sub == null || s == null || this.sub.id != s.id) {
+            this.selectedDistPaymentId = -1;
+        }
+        this.sub = s;
+        this.tab = tab;
+    }
     public Subscription getSubscription() { return sub; }
     public int getTab() { return tab; }
 
@@ -115,7 +124,12 @@ public class DetailsScreen extends JPanel {
         if (pays.isEmpty()) {
             latest.add(UI.wrap("No payments have been recorded for this subscription yet.", 200, Theme.SMALL, Theme.MUTED), BorderLayout.CENTER);
             UI.Btn rec = UI.primary("Record Payment", Icons.Type.PLUS);
-            rec.addActionListener(e -> App.get().recordPayment(sub));
+            if (sub.status == Status.CANCELLED) {
+                rec.setEnabled(false);
+                rec.setToolTipText("Cancelled subscriptions cannot accept new payments.");
+            } else {
+                rec.addActionListener(e -> App.get().recordPayment(sub));
+            }
             latest.add(stretch(rec), BorderLayout.SOUTH);
         } else {
             Payment p = pays.get(0);
@@ -159,17 +173,23 @@ public class DetailsScreen extends JPanel {
     // ---------------------------------------------------------------- Payments
     private JComponent paymentsTab() {
         UI.Btn rec = UI.primary("Record Payment", Icons.Type.PLUS);
-        rec.addActionListener(e -> App.get().recordPayment(sub));
-        UI.RoundPanel card = tabCard(Icons.Type.RECEIPT, "Payment History", "View and manage manually recorded payments for this subscription.", rec);
+        if (sub.status == Status.CANCELLED) {
+            rec.setEnabled(false);
+            rec.setToolTipText("Cancelled subscriptions cannot accept new payments.");
+        } else {
+            rec.addActionListener(e -> App.get().recordPayment(sub));
+        }
+        UI.RoundPanel card = tabCard(Icons.Type.RECEIPT, "Payment History", "Read-only ledger of recorded payments for this subscription.", rec);
         DataTable t = new DataTable(new String[]{"Payment Date", "Amount Paid", "Renewal Period", "Payment Method", "Actions"},
                 new float[]{2f, 1.6f, 1.8f, 2f, 1f}, new int[]{DataTable.L, DataTable.R, DataTable.L, DataTable.L, DataTable.R}, true);
         List<Payment> pays = Store.get().paymentsFor(sub);
         double total = 0;
         for (Payment p : pays) {
-            UI.Btn edit = UI.link("Edit");
-            edit.addActionListener(e -> App.get().editPayment(p));
+            UI.Btn view = UI.link("View");
+            view.setForeground(Theme.TEXT_2);
+            view.addActionListener(e -> App.get().viewPayment(p));
             t.addRow(null, UI.label(Theme.date(p.date), Theme.BODY_B, Theme.TEXT), Common.money(p.amount, true),
-                    blank(p.period), p.method == null ? "Not specified" : p.method, edit);
+                    blank(p.period), p.method == null ? "Not specified" : p.method, view);
             total += p.amount;
         }
         if (pays.isEmpty()) t.setEmpty("No payments recorded yet. Use Record Payment to add one.");
@@ -181,24 +201,57 @@ public class DetailsScreen extends JPanel {
     // ---------------------------------------------------------------- Sharing
     private JComponent sharingTab() {
         Store st = Store.get();
-        // Members
+        List<Member> ms = st.membersFor(sub);
+        SplitAllocator.SplitConfig splitConfig = st.splitConfigFor(sub);
+
+        // Members & split setup
+        UI.Btn configSplit = UI.secondary("Configure Split", Icons.Type.SLIDERS);
+        configSplit.setEnabled(!ms.isEmpty());
+        configSplit.setToolTipText(ms.isEmpty() ? "Add at least one member first." : "Designate who pays and split shares across members.");
+        configSplit.addActionListener(e -> new SplitConfigDialog(App.get(), sub).open());
+
         UI.Btn addMember = UI.primary("Add Member", Icons.Type.PLUS);
         addMember.addActionListener(e -> new MemberDialog(App.get(), sub, null).open());
+
         UI.RoundPanel members = UI.card(new BorderLayout(0, 14), 0);
-        JComponent mh = UI.split(Common.tileHeading(Icons.Type.USERS, "Shared Members", "Manage people sharing this subscription."), addMember);
+        JComponent mh = UI.split(
+                Common.tileHeading(Icons.Type.USERS, "Shared Members", "Manage family members sharing this subscription and their split shares."),
+                UI.hrow(8, configSplit, addMember));
         ((JComponent) mh).setBorder(new EmptyBorder(16, 16, 0, 16));
         members.add(mh, BorderLayout.NORTH);
-        DataTable mt = new DataTable(new String[]{"Member Name", "Role / Notes", "Actions"}, new float[]{2.5f, 3.5f, 1f},
-                new int[]{DataTable.L, DataTable.L, DataTable.R}, false);
-        List<Member> ms = st.membersFor(sub);
+
+        DataTable mt = new DataTable(new String[]{"Member Name", "Role", "Assigned Share", "Notes", "Actions"},
+                new float[]{2.0f, 1.3f, 1.3f, 2.2f, 0.8f},
+                new int[]{DataTable.L, DataTable.L, DataTable.R, DataTable.L, DataTable.R}, false);
         for (Member m : ms) {
+            String key = SplitAllocator.memberKey(m.id);
+            boolean isPayer = key.equals(splitConfig.payerKey());
+            BigDecimal share = splitConfig.shares().stream()
+                    .filter(ps -> ps.participant().key().equals(key))
+                    .map(SplitAllocator.ParticipantShare::share)
+                    .findFirst()
+                    .orElse(BigDecimal.ZERO);
+            UI.Pill roleBadge = isPayer
+                    ? UI.badge("Primary Payer", Theme.ACCENT, Theme.PRIMARY_LIGHT)
+                    : new UI.Pill("Member", Theme.TEXT_2, Theme.SUBTLE, Theme.BORDER, 999);
             UI.Btn edit = UI.link("Edit");
             edit.addActionListener(e -> new MemberDialog(App.get(), sub, m).open());
-            mt.addRow(null, UI.label(m.name, Theme.BODY_B, Theme.TEXT), blank(m.notes), edit);
+            mt.addRow(null, UI.label(m.name, Theme.BODY_B, Theme.TEXT), roleBadge,
+                    Common.money(share.doubleValue(), false), blank(SplitAllocator.cleanNotes(m.notes)), edit);
         }
         if (ms.isEmpty()) mt.setEmpty("No one is sharing this subscription yet.");
-        mt.setFooter(Common.footerText(ms.size() + (ms.size() == 1 ? " member sharing" : " members sharing")), null);
+        String payerLabel = splitConfig.shares().stream()
+                .filter(SplitAllocator.ParticipantShare::payer)
+                .map(ps -> ps.participant().name())
+                .findFirst()
+                .orElse(SplitAllocator.OWNER_LABEL);
+        mt.setFooter(
+                Common.footerText(ms.size() + (ms.size() == 1 ? " member sharing" : " members sharing")),
+                ms.isEmpty() ? null : Common.footerText("Payer: " + payerLabel + " \u2022 " + splitConfig.mode().label));
         members.add(clipped(mt), BorderLayout.CENTER);
+
+        // Group Head / Payer Distribution View (Paid vs. Pending)
+        UI.RoundPanel distributionCard = buildDistributionCard(st, ms);
 
         // Contributions
         UI.Btn addContrib = UI.primary("Record Contribution", Icons.Type.PLUS);
@@ -223,7 +276,114 @@ public class DetailsScreen extends JPanel {
                 Common.footerTotal("Total Contributions Received:", Theme.peso(total), Theme.ACCENT));
         contrib.add(clipped(ct), BorderLayout.CENTER);
 
-        return UI.vstack(16, members, contrib);
+        return UI.vstack(16, members, distributionCard, contrib);
+    }
+
+    private UI.RoundPanel buildDistributionCard(Store st, List<Member> members) {
+        UI.RoundPanel card = UI.card(new BorderLayout(0, 14), 0);
+        List<Payment> pays = st.paymentsFor(sub);
+
+        JComponent rightControl = null;
+        Payment selectedPayment = null;
+        if (!pays.isEmpty()) {
+            selectedPayment = pays.stream()
+                    .filter(p -> p.id == selectedDistPaymentId)
+                    .findFirst()
+                    .orElse(pays.get(0));
+            selectedDistPaymentId = selectedPayment.id;
+
+            UI.Combo<Payment> paySelector = new UI.Combo<>(pays.toArray(new Payment[0]));
+            paySelector.setSelectedItem(selectedPayment);
+            paySelector.setPreferredSize(new Dimension(230, paySelector.getPreferredSize().height));
+            paySelector.addActionListener(e -> {
+                Payment picked = paySelector.selected();
+                if (picked != null && picked.id != selectedDistPaymentId) {
+                    selectedDistPaymentId = picked.id;
+                    refresh();
+                }
+            });
+            rightControl = UI.hrow(8, UI.label("Payment:", Theme.SMALL, Theme.TEXT_2), paySelector);
+        }
+
+        JComponent head = UI.split(
+                Common.tileHeading(Icons.Type.RECEIPT, "Group Head / Payer Distribution",
+                        "Review paid vs. pending member shares for a recorded payment."),
+                rightControl);
+        head.setBorder(new EmptyBorder(16, 16, 0, 16));
+        card.add(head, BorderLayout.NORTH);
+
+        if (members.isEmpty()) {
+            JPanel msg = UI.clear(new BorderLayout());
+            msg.setBorder(new EmptyBorder(0, 16, 16, 16));
+            msg.add(UI.note(Icons.Type.INFO, Theme.SUBTLE, Theme.MUTED, null,
+                    "Add shared family members above to split recurring payments and track paid vs. pending shares.", 600));
+            card.add(msg, BorderLayout.CENTER);
+            return card;
+        }
+
+        if (selectedPayment == null) {
+            JPanel msg = UI.clear(new BorderLayout());
+            msg.setBorder(new EmptyBorder(0, 16, 16, 16));
+            msg.add(UI.note(Icons.Type.INFO, Theme.SUBTLE, Theme.MUTED, null,
+                    "Record a payment for this subscription to view paid vs. pending member distributions.", 600));
+            card.add(msg, BorderLayout.CENTER);
+            return card;
+        }
+
+        SplitAllocator.DistributionSummary summary = st.distributionFor(selectedPayment);
+        Payment targetPayment = selectedPayment;
+
+        UI.RoundPanel strip = new UI.RoundPanel(new GridLayout(1, 4, 12, 0), 8, Theme.SUBTLE, null);
+        strip.setBorder(new EmptyBorder(12, 14, 12, 14));
+        strip.add(UI.vstack(3, UI.muted("Designated Payer"), UI.label(summary.payerName(), Theme.BODY_B, Theme.TEXT)));
+        strip.add(UI.vstack(3, UI.muted("Total Payment"), UI.label(Theme.peso(summary.totalPayment().doubleValue()), Theme.BODY_B, Theme.TEXT)));
+        strip.add(UI.vstack(3, UI.muted("Collected"), UI.label(Theme.peso(summary.totalCollected().doubleValue()), Theme.BODY_B, Theme.GREEN)));
+        boolean allSettled = summary.totalPending().signum() == 0;
+        strip.add(UI.vstack(3, UI.muted("Pending Collection"),
+                UI.label(allSettled ? "\u20B10.00 (Settled)" : Theme.peso(summary.totalPending().doubleValue()),
+                        Theme.BODY_B, allSettled ? Theme.GREEN : Theme.ORANGE)));
+        JPanel stripWrap = UI.clear(new BorderLayout());
+        stripWrap.setBorder(new EmptyBorder(0, 16, 0, 16));
+        stripWrap.add(strip, BorderLayout.CENTER);
+
+        DataTable dt = new DataTable(
+                new String[]{"Participant", "Expected Share", "Paid", "Pending", "Status", "Action"},
+                new float[]{2.0f, 1.3f, 1.2f, 1.2f, 1.3f, 1.1f},
+                new int[]{DataTable.L, DataTable.R, DataTable.R, DataTable.R, DataTable.L, DataTable.R}, false);
+
+        for (SplitAllocator.DistributionRow row : summary.rows()) {
+            UI.Pill badge = switch (row.status()) {
+                case PAYER -> UI.badge("Paid (Payer)", Theme.ACCENT, Theme.PRIMARY_LIGHT);
+                case PAID -> UI.badge("Paid", Theme.GREEN, Theme.GREEN_BG);
+                case PARTIAL -> UI.badge("Partial", Theme.AMBER, Theme.AMBER_BG);
+                case PENDING -> UI.badge("Pending", Theme.RED, Theme.RED_BG);
+            };
+            JComponent action;
+            if (!row.participant().owner() && row.participant().member() != null && row.pendingAmount().signum() > 0) {
+                UI.Btn markPaid = UI.link("Mark Paid");
+                markPaid.addActionListener(e -> new ContributionDialog(
+                        App.get(), sub, row.participant().member(), targetPayment, row.pendingAmount()).open());
+                action = markPaid;
+            } else {
+                action = UI.label("Settled", Theme.SMALL, Theme.MUTED);
+            }
+            dt.addRow(null,
+                    UI.label(row.participant().name(), Theme.BODY_B, Theme.TEXT),
+                    Common.money(row.expectedShare().doubleValue(), false),
+                    Common.money(row.paidAmount().doubleValue(), false),
+                    Common.money(row.pendingAmount().doubleValue(), row.pendingAmount().signum() > 0),
+                    badge,
+                    action);
+        }
+
+        dt.setFooter(
+                Common.footerText("Payer own share: " + Theme.peso(summary.payerShare().doubleValue())),
+                Common.footerTotal("Pending to Collect:", Theme.peso(summary.totalPending().doubleValue()),
+                        allSettled ? Theme.GREEN : Theme.ORANGE));
+
+        JPanel center = UI.vstack(12, stripWrap, clipped(dt));
+        card.add(center, BorderLayout.CENTER);
+        return card;
     }
 
     /** Puts a table flush inside a card, keeping the card's rounded bottom corners. */

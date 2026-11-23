@@ -351,11 +351,14 @@ public abstract class BaseDialog extends JDialog {
         return n;
     }
 
+    /** Strictly parses a positive currency amount to a 2-decimal BigDecimal (> 0), or null if invalid. */
+    protected static java.math.BigDecimal parsePositiveAmount(String s) {
+        return InputFilters.parsePositiveAmount(s);
+    }
+
     /** Parses a positive money amount; returns null if invalid. */
     protected static Double parseAmount(String s) {
-        try {
-            double v = Double.parseDouble(s.replace(",", "").replace("\u20B1", "").trim());
-            return v > 0 ? Math.round(v * 100) / 100.0 : null;
-        } catch (NumberFormatException e) { return null; }
+        java.math.BigDecimal bd = parsePositiveAmount(s);
+        return bd == null ? null : bd.doubleValue();
     }
 }

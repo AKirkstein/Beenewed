@@ -43,6 +43,17 @@ public final class Common {
         return new UI.Pill(t, Theme.MUTED, Theme.SUBTLE, Theme.PLACEHOLDER, 999);
     }
 
+    /** Status-aware due badge: non-active subscriptions are never flagged as overdue. */
+    public static UI.Pill dueBadge(Subscription s) {
+        if (s.status == Status.PAUSED) {
+            return new UI.Pill("On hold", Theme.MUTED, Theme.SUBTLE, Theme.PLACEHOLDER, 999);
+        }
+        if (s.status == Status.CANCELLED) {
+            return new UI.Pill("Inactive", Theme.MUTED, Theme.SUBTLE, Theme.PLACEHOLDER, 999);
+        }
+        return dueBadge(s.nextRenewal);
+    }
+
     /** Icon box + bold subscription name, used in table cells. */
     public static JComponent subCell(Subscription s, boolean bold) {
         JLabel name = UI.label(s.name, bold ? Theme.BODY_B : Theme.BODY, Theme.TEXT);

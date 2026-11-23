@@ -425,6 +425,9 @@ public final class UI {
             prefix.setBorder(new EmptyBorder(0, 12, 0, 10));
             field = new TextField(placeholder);
             field.setBorder(new EmptyBorder(9, 4, 9, 12));
+            if ("\u20B1".equals(prefixText)) {
+                InputFilters.installDecimalFilter(field);
+            }
             field.addFocusListener(new FocusAdapter() {
                 public void focusGained(FocusEvent e) { PrefixField.this.repaint(); }
                 public void focusLost(FocusEvent e) { PrefixField.this.repaint(); }
@@ -446,7 +449,13 @@ public final class UI {
         }
         public String getText() { return field.getText(); }
         public void setText(String t) { field.setText(t); }
-        @Override public void setEnabled(boolean b) { super.setEnabled(b); field.setEnabled(b); field.setEditable(b); field.setDisabledTextColor(Theme.MUTED); }
+        @Override public void setEnabled(boolean b) {
+            super.setEnabled(b);
+            field.setEnabled(b);
+            field.setEditable(b);
+            field.setFocusable(b);
+            field.setDisabledTextColor(Theme.MUTED);
+        }
     }
 
     /** Combo box styled like the design's dropdowns. */

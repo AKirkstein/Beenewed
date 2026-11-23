@@ -1,33 +1,73 @@
 package beenewed.dialogs;
 
+import beenewed.model.BillingRules;
 import beenewed.model.Models;
 import beenewed.model.Models.*;
+import beenewed.model.SplitAllocator;
 import beenewed.model.Store;
 import beenewed.ui.*;
+import com.beenewed.backend.exception.ValidationException;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
+import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
-/** D2 / D2-B \u2014 Record or edit a payment. */
+/**
+ * D2 — Record a new payment (immutable ledger) or inspect a recorded payment receipt read-only.
+ */
 public class PaymentDialog extends BaseDialog {
-    private final Payment editing;
+    private final boolean readOnly;
     private final UI.Combo<Subscription> sub;
     private final DateField date = new DateField("Select payment date");
     private final UI.PrefixField amount = new UI.PrefixField("\u20B1", "0.00");
     private final UI.TextField period = new UI.TextField("e.g. November 2026");
     private final UI.Combo<String> method = new UI.Combo<>(Models.PAYMENT_METHODS);
+    private final UI.Combo<ScopeOption> scopeCombo = new UI.Combo<>();
+    private final UI.Combo<SplitAllocator.Participant> payerCombo = new UI.Combo<>();
     private final UI.TextArea notes = new UI.TextArea("Add an optional note about this payment (e.g. Paid via GCash, receipt ref)...", 3);
     private final Field fSub, fDate, fAmount, fPeriod;
+    private final JPanel sharedRowWrap = UI.clear(new BorderLayout());
+    private boolean updatingControls;
 
-    public PaymentDialog(JFrame owner, Payment p, Subscription preset) {
-        super(owner, p == null ? "Record Payment" : "Edit Payment",
-                p == null ? "Record a completed payment for one of your subscriptions." : "Update the details of this recorded payment.",
-                null, "Save Payment", null, 580);
-        editing = p;
+    private record ScopeOption(String label, BigDecimal amount, boolean splitShareOnly) {
+        @Override public String toString() { return label; }
+    }
+
+    /** Opens the dialog to record a new payment (immutable once saved). */
+    public PaymentDialog(JFrame owner, Subscription preset) {
+        this(owner, null, preset);
+    }
+
+    /** Opens a read-only receipt view for an already recorded payment. */
+    public static PaymentDialog viewReceipt(JFrame owner, Payment payment) {
+        return new PaymentDialog(owner, payment, payment.sub);
+    }
+
+    public PaymentDialog(JFrame owner, Payment existing, Subscription preset) {
+        super(owner,
+                existing == null ? "Record Payment" : "Payment Receipt",
+                existing == null
+                        ? "Record a completed payment. Recorded payments are immutable and advance the next due date."
+                        : "Read-only ledger record. Recorded payments cannot be edited after creation.",
+                existing == null ? Icons.Type.RECEIPT : Icons.Type.LOCK,
+                existing == null ? "Save Payment" : "Close",
+                existing == null ? Icons.Type.CHECK : null,
+                600);
+        this.readOnly = existing != null;
         Store st = Store.get();
-        sub = new UI.Combo<>(st.subscriptions.toArray(new Subscription[0]));
+
+        List<Subscription> subChoices = readOnly
+                ? st.subscriptions
+                : st.subscriptions.stream()
+                        .filter(s -> s.status != Status.CANCELLED || (preset != null && s.id == preset.id))
+                        .toList();
+        sub = new UI.Combo<>(subChoices.toArray(new Subscription[0]));
         sub.setRenderer(new DefaultListCellRenderer() {
             @Override public Component getListCellRendererComponent(JList<?> list, Object v, int idx, boolean sel, boolean f) {
                 JLabel l = (JLabel) super.getListCellRendererComponent(list, v, idx, sel, f);
@@ -44,72 +84,266 @@ public class PaymentDialog extends BaseDialog {
                 return l;
             }
         });
+        payerCombo.setRenderer(new DefaultListCellRenderer() {
+            @Override public Component getListCellRendererComponent(JList<?> list, Object v, int idx, boolean sel, boolean f) {
+                JLabel l = (JLabel) super.getListCellRendererComponent(list, v, idx, sel, f);
+                l.setBorder(new EmptyBorder(5, 8, 5, 8));
+                if (v instanceof SplitAllocator.Participant p) {
+                    l.setText(p.name());
+                }
+                l.setFont(Theme.BODY);
+                if (idx == -1) l.setOpaque(false);
+                else { l.setBackground(sel ? Theme.PRIMARY_LIGHT : Theme.ELEVATED); l.setForeground(Theme.TEXT); }
+                return l;
+            }
+        });
 
         fSub = new Field("Subscription", true, null, sub, null);
         place(fSub); gap(10);
+
+        Field fScope = new Field("Payment Amount Basis", false, null, scopeCombo, "Match full price or a designated split share.");
+        Field fPayer = new Field("Paid By (Group Head / Payer)", false, null, payerCombo, "Who paid this renewal bill.");
+        JPanel sharedInner = UI.vstack(0, pair(fScope, fPayer), Box.createVerticalStrut(10));
+        sharedRowWrap.add(sharedInner, BorderLayout.CENTER);
+        sharedRowWrap.setVisible(false);
+        place(sharedRowWrap);
+
         fDate = new Field("Payment Date", true, null, date, "The date the payment was actually completed.");
-        fAmount = new Field("Amount Paid", true, null, amount, "Enter the actual amount paid.");
+        fAmount = new Field("Amount Paid", true, null, amount, "Must match the subscription price or designated split share.");
         place(pair(fDate, fAmount)); gap(10);
-        fPeriod = new Field("Renewal Period", true, null, period, "Billing period associated with this payment.");
+        fPeriod = new Field("Renewal Period", true, null, period, "One payment is allowed per subscription per billing period.");
         Field fMethod = new Field("Payment Method", false, "(Optional)", method, " ");
         place(pair(fPeriod, fMethod)); gap(10);
         place(new Field("Notes / Reference", false, "(Optional)", notes, null)); gap(12);
-        place(infoNote("<b style='color:" + Theme.hex(Theme.TEXT) + "'>Note:</b> Recording a payment logs an actual financial transaction in Payment History. It does not automatically advance the next renewal date.", false));
 
-        // Prefill the amount with the subscription price for new payments
+        if (readOnly) {
+            place(infoNote("<b style='color:" + Theme.hex(Theme.TEXT)
+                    + "'>Read-Only Ledger:</b> Recorded payment entries are immutable to preserve financial history and audit integrity.", true));
+        } else {
+            place(infoNote("<b style='color:" + Theme.hex(Theme.TEXT)
+                    + "'>Ledger &amp; Due Dates:</b> Recording a payment creates an immutable ledger entry, advances the subscription\u2019s next due date by one billing cycle, and clears overdue status once settled.", false));
+        }
+
         sub.addActionListener(e -> {
-            if (editing == null && sub.selected() != null) amount.setText(Theme.num(sub.selected().price).replace(",", ""));
+            if (!readOnly && !updatingControls) {
+                syncFromSelectedSubscription();
+            }
+        });
+        scopeCombo.addActionListener(e -> {
+            if (!readOnly && !updatingControls && scopeCombo.selected() != null) {
+                ScopeOption opt = scopeCombo.selected();
+                amount.setText(opt.amount().toPlainString());
+                fAmount.error(null);
+            }
         });
 
-        if (p != null) {
-            sub.setSelectedItem(p.sub);
-            date.setDate(p.date);
-            amount.setText(Theme.num(p.amount).replace(",", ""));
-            period.setText(p.period == null ? "" : p.period);
-            method.setSelectedItem(p.method == null ? "Not specified" : p.method);
-            notes.setText(p.notes == null ? "" : p.notes);
-            addDelete("payment", () -> st.deletePayment(p));
+        if (existing != null) {
+            sub.setSelectedItem(existing.sub);
+            populateSharedControls(existing.sub, existing);
+            date.setDate(existing.date);
+            amount.setText(Theme.num(existing.amount).replace(",", ""));
+            period.setText(existing.period == null ? "" : existing.period);
+            method.setSelectedItem(existing.method == null ? "Not specified" : existing.method);
+            String clean = SplitAllocator.cleanNotes(existing.notes);
+            notes.setText(clean == null ? "" : clean);
+
+            // Enforce strict read-only ledger inspection (no edits, no active caret, no calendar popup)
+            sub.setEnabled(false);
+            sub.setFocusable(false);
+            date.setEnabled(false);
+            amount.setEnabled(false);
+            amount.field.setFocusable(false);
+            period.setEditable(false);
+            period.setEnabled(false);
+            period.setFocusable(false);
+            period.setDisabledTextColor(Theme.MUTED);
+            method.setEnabled(false);
+            method.setFocusable(false);
+            scopeCombo.setEnabled(false);
+            scopeCombo.setFocusable(false);
+            payerCombo.setEnabled(false);
+            payerCombo.setFocusable(false);
+            notes.setEditable(false);
+            notes.setEnabled(false);
+            notes.setFocusable(false);
+            notes.setDisabledTextColor(Theme.MUTED);
+            primaryBtn.setVisible(false);
+            cancelBtn.setText("Close");
+            getRootPane().setDefaultButton(cancelBtn);
+            SwingUtilities.invokeLater(cancelBtn::requestFocusInWindow);
         } else {
             if (preset != null) sub.setSelectedItem(preset);
-            else if (!st.subscriptions.isEmpty()) sub.setSelectedIndex(0);
-            if (sub.selected() != null) amount.setText(Theme.num(sub.selected().price).replace(",", ""));
+            else if (sub.getItemCount() > 0) sub.setSelectedIndex(0);
             date.setDate(Store.today());
-            if (sub.selected() != null) {
-                LocalDate r = sub.selected().nextRenewal;
-                period.setText(r.getMonth().getDisplayName(java.time.format.TextStyle.FULL, java.util.Locale.ENGLISH) + " " + r.getYear());
-            }
+            syncFromSelectedSubscription();
         }
     }
 
+    private void syncFromSelectedSubscription() {
+        Subscription s = sub.selected();
+        if (s == null) {
+            sharedRowWrap.setVisible(false);
+            return;
+        }
+        updatingControls = true;
+        try {
+            amount.setText(BillingRules.money(s.price).toPlainString());
+            period.setText(BillingRules.defaultPeriodLabel(s.nextRenewal, s.cycle));
+            populateSharedControls(s, null);
+            fSub.error(null);
+            fAmount.error(null);
+            fPeriod.error(null);
+        } finally {
+            updatingControls = false;
+        }
+        if (isVisible()) {
+            refit();
+        }
+    }
+
+    private void populateSharedControls(Subscription s, Payment existing) {
+        Store st = Store.get();
+        List<Member> members = st.membersFor(s);
+        scopeCombo.removeAllItems();
+        payerCombo.removeAllItems();
+        if (members.isEmpty()) {
+            sharedRowWrap.setVisible(false);
+            return;
+        }
+
+        SplitAllocator.SplitConfig config = st.splitConfigFor(s);
+        BigDecimal fullPrice = BillingRules.money(s.price);
+        scopeCombo.addItem(new ScopeOption("Full Price (" + Theme.peso(s.price) + ")", fullPrice, false));
+
+        Set<BigDecimal> shares = SplitAllocator.allowedSplitShares(s, members);
+        BigDecimal ownerShare = SplitAllocator.ownerSplitShare(s, members);
+        if (ownerShare != null && ownerShare.compareTo(fullPrice) != 0) {
+            scopeCombo.addItem(new ScopeOption("My Split Share (" + Theme.peso(ownerShare.doubleValue()) + ")", ownerShare, true));
+        }
+        for (BigDecimal share : shares) {
+            if (share.compareTo(fullPrice) == 0) continue;
+            if (ownerShare != null && share.compareTo(ownerShare) == 0) continue;
+            scopeCombo.addItem(new ScopeOption("Designated Split Share (" + Theme.peso(share.doubleValue()) + ")", share, true));
+        }
+
+        String targetPayerKey = config.payerKey();
+        if (existing != null) {
+            SplitAllocator.PaymentSplitMeta meta = SplitAllocator.parsePaymentMeta(existing.notes);
+            if (meta.payerKey() != null) {
+                targetPayerKey = meta.payerKey();
+            }
+            BigDecimal existingAmt = BillingRules.money(existing.amount);
+            for (int i = 0; i < scopeCombo.getItemCount(); i++) {
+                ScopeOption item = scopeCombo.getItemAt(i);
+                if (item.amount().compareTo(existingAmt) == 0) {
+                    scopeCombo.setSelectedIndex(i);
+                    break;
+                }
+            }
+        }
+
+        List<SplitAllocator.Participant> participants = SplitAllocator.buildParticipants(members, config.includeOwner());
+        int payerIndex = 0;
+        for (int i = 0; i < participants.size(); i++) {
+            SplitAllocator.Participant p = participants.get(i);
+            payerCombo.addItem(p);
+            if (p.key().equals(targetPayerKey)) {
+                payerIndex = i;
+            }
+        }
+        if (payerCombo.getItemCount() > 0) {
+            payerCombo.setSelectedIndex(payerIndex);
+        }
+        sharedRowWrap.setVisible(true);
+    }
+
     @Override protected Runnable prepareSave() {
+        if (readOnly) {
+            close();
+            return null;
+        }
+        Store st = Store.get();
         boolean ok = true;
         Subscription selectedSub = sub.selected();
-        fSub.error(selectedSub == null ? "Select a subscription." : null);
-        ok &= selectedSub != null;
-        LocalDate d = date.getDate();
-        fDate.error(date.isBlank() ? "Payment date is required." : d == null ? "Enter a valid date (mm/dd/yyyy)." : null);
-        ok &= d != null;
-        Double a = parseAmount(amount.getText());
-        fAmount.error(a == null ? "Enter an amount greater than zero." : null);
-        ok &= a != null;
-        String per = period.getText().trim();
-        fPeriod.error(per.isEmpty() ? "Renewal period is required." : null);
-        ok &= !per.isEmpty();
-        if (!ok) return null;
+        if (selectedSub == null) {
+            fSub.error("Select a subscription.");
+            ok = false;
+        } else if (selectedSub.status == Status.CANCELLED) {
+            fSub.error("Cannot record a payment for a cancelled subscription.");
+            ok = false;
+        } else {
+            fSub.error(null);
+        }
 
-        String n = notes.getText().trim();
+        LocalDate d = date.getDate();
+        fDate.error(date.isBlank() ? "Payment date is required." : d == null ? "Enter a valid date (MM/dd/yyyy or yyyy-MM-dd)." : null);
+        ok &= d != null;
+
+        BigDecimal a = parsePositiveAmount(amount.getText());
+        if (a == null) {
+            fAmount.error("Enter a valid positive amount (e.g., 899.00).");
+            ok = false;
+        } else if (selectedSub != null) {
+            try {
+                List<Member> members = st.membersFor(selectedSub);
+                BillingRules.validatePaymentAmount(
+                        a,
+                        BillingRules.money(selectedSub.price),
+                        SplitAllocator.allowedSplitShares(selectedSub, members));
+                fAmount.error(null);
+            } catch (ValidationException ex) {
+                fAmount.error(ex.getMessage());
+                ok = false;
+            }
+        } else {
+            fAmount.error(null);
+        }
+
+        String per = period.getText().trim();
+        if (per.isEmpty()) {
+            fPeriod.error("Renewal period is required.");
+            ok = false;
+        } else if (selectedSub != null && BillingRules.findDuplicatePayment(selectedSub, per, st.payments).isPresent()) {
+            fPeriod.error("A payment for " + selectedSub.name + " in \"" + per + "\" already exists.");
+            ok = false;
+        } else {
+            fPeriod.error(null);
+        }
+
+        if (!ok) {
+            refit();
+            return null;
+        }
+
+        String userNote = notes.getText().trim();
+        String finalNotes = userNote.isEmpty() ? null : userNote;
+
+        List<Member> members = st.membersFor(selectedSub);
+        if (!members.isEmpty()) {
+            SplitAllocator.SplitConfig config = st.splitConfigFor(selectedSub);
+            SplitAllocator.Participant chosenPayer = payerCombo.selected();
+            String payerKey = chosenPayer != null ? chosenPayer.key() : config.payerKey();
+            BigDecimal payAmt = a;
+            BigDecimal subPrice = BillingRules.money(selectedSub.price);
+            boolean splitOnly = payAmt.compareTo(subPrice) != 0;
+            Map<String, BigDecimal> snapshot = new LinkedHashMap<>();
+            if (!splitOnly) {
+                for (SplitAllocator.ParticipantShare ps : config.shares()) {
+                    snapshot.put(ps.participant().key(), ps.share());
+                }
+            }
+            SplitAllocator.PaymentSplitMeta meta = new SplitAllocator.PaymentSplitMeta(payerKey, splitOnly, snapshot);
+            finalNotes = SplitAllocator.encodePaymentNotes(finalNotes, meta);
+        }
+
         Payment payload = new Payment(
-                editing == null ? 0 : editing.id,
+                0,
                 selectedSub,
                 d,
-                a,
+                a.doubleValue(),
                 per,
                 method.selected(),
-                n.isEmpty() ? null : n);
-        return () -> {
-            Store st = Store.get();
-            if (editing == null) st.recordPayment(payload);
-            else st.updatePayment(payload);
-        };
+                finalNotes);
+        return () -> Store.get().recordPayment(payload);
     }
 }

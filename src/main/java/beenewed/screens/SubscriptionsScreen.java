@@ -129,7 +129,11 @@ public class SubscriptionsScreen extends JPanel {
         JPopupMenu m = new JPopupMenu();
         m.add(item("Edit Subscription", Icons.Type.PENCIL, () -> App.get().editSubscription(s)));
         m.add(item("Change Status", Icons.Type.SWAP, () -> App.get().changeStatus(s)));
-        m.add(item("Record Payment", Icons.Type.RECEIPT, () -> App.get().recordPayment(s)));
+        JMenuItem recPay = item("Record Payment", Icons.Type.RECEIPT, () -> App.get().recordPayment(s));
+        if (s.status == Status.CANCELLED) {
+            recPay.setEnabled(false);
+        }
+        m.add(recPay);
         m.addSeparator();
         m.add(item("Delete", Icons.Type.TRASH, () -> {
             int ok = JOptionPane.showConfirmDialog(App.get(), "Delete " + s.name + " and all of its records?", "Delete Subscription",
