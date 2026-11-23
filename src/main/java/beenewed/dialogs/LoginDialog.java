@@ -3,14 +3,20 @@ package beenewed.dialogs;
 import beenewed.ui.Icons;
 import beenewed.ui.Theme;
 import beenewed.ui.UI;
+import com.beenewed.supabase.PasswordPolicy;
 import com.beenewed.supabase.SupabaseAuthException;
 import com.beenewed.supabase.SupabaseAuthService;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import java.awt.*;
 import java.awt.event.KeyEvent;
 import java.util.Arrays;
+import java.util.EnumMap;
+import java.util.EnumSet;
+import java.util.Map;
 import java.util.concurrent.ExecutionException;
 
 /**
@@ -49,6 +55,18 @@ public final class LoginDialog extends JDialog {
     private final UI.PasswordField passwordField = new UI.PasswordField("Enter your password");
     private final UI.PasswordField confirmPasswordField = new UI.PasswordField("Re-enter your password");
     private final UI.TextField otpField = new UI.TextField("Enter verification code");
+    /** Look-and-feel echo character captured before any reveal toggling. */
+    private final char defaultEchoChar = passwordField.getEchoChar() != 0 ? passwordField.getEchoChar() : '\u2022';
+
+    // Live password-strength checklist (Create Account mode only)
+    private final Map<PasswordPolicy.Rule, JLabel> ruleLabels = new EnumMap<>(PasswordPolicy.Rule.class);
+    private final JPanel strengthPanel;
+    private final JLabel matchHint = UI.label(" ", Theme.SMALL, Theme.MUTED);
+    private boolean strengthAttempted = false;
+
+    // Show-password toggle covering both password fields
+    private final JCheckBox showPasswordBox = new JCheckBox("Show password");
+    private final JPanel showPasswordWrap;
 
     private final JPanel emailSection;
     private final JPanel passwordSection;
@@ -126,11 +144,55 @@ public final class LoginDialog extends JDialog {
 
         // Form fields (bottom margin lives inside each section so hidden fields collapse cleanly)
         emailSection = labeledField("Email", emailField, 12);
-        passwordSection = labeledField("Password", passwordField, 12);
-        confirmSection = labeledField("Confirm Password", confirmPasswordField, 12);
+
+        // Password strength checklist, one row per rule
+        strengthPanel = new JPanel();
+        strengthPanel.setOpaque(false);
+        strengthPanel.setLayout(new BoxLayout(strengthPanel, BoxLayout.Y_AXIS));
+        strengthPanel.setBorder(new EmptyBorder(8, 2, 0, 0));
+        JLabel reqTitle = UI.label("Password must include:", Theme.SMALL_B, Theme.TEXT_2);
+        reqTitle.setBorder(new EmptyBorder(0, 0, 4, 0));
+        reqTitle.setAlignmentX(0f);
+        strengthPanel.add(reqTitle);
+        for (PasswordPolicy.Rule rule : PasswordPolicy.Rule.values()) {
+            JLabel row = UI.label(rule.label, Theme.SMALL, Theme.MUTED);
+            row.setIconTextGap(6);
+            row.setBorder(new EmptyBorder(1, 0, 1, 0));
+            row.setAlignmentX(0f);
+            ruleLabels.put(rule, row);
+            strengthPanel.add(row);
+        }
+        strengthPanel.setVisible(false);
+
+        matchHint.setIconTextGap(6);
+        matchHint.setBorder(new EmptyBorder(6, 2, 0, 0));
+        matchHint.setVisible(false);
+
+        passwordSection = dynamicSection(12, fieldLabel("Password"), passwordField, strengthPanel);
+        confirmSection = dynamicSection(12, fieldLabel("Confirm Password"), confirmPasswordField, matchHint);
         confirmSection.setVisible(false);
         otpSection = labeledField("Verification Code", otpField, 14);
         otpSection.setVisible(false);
+
+        // Show password (applies to both Password and Confirm Password)
+        showPasswordBox.setOpaque(false);
+        showPasswordBox.setFont(Theme.SMALL);
+        showPasswordBox.setForeground(Theme.TEXT_2);
+        showPasswordBox.setFocusPainted(false);
+        showPasswordBox.setMnemonic(KeyEvent.VK_H);
+        showPasswordBox.setToolTipText("Reveal the characters you typed (Alt+H)");
+        showPasswordBox.addItemListener(e -> applyPasswordVisibility());
+        JPanel showRow = UI.clear(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        showRow.add(showPasswordBox);
+        showPasswordWrap = wrapSection(showRow, 10);
+
+        DocumentListener feedback = new DocumentListener() {
+            public void insertUpdate(DocumentEvent e) { updatePasswordFeedback(); }
+            public void removeUpdate(DocumentEvent e) { updatePasswordFeedback(); }
+            public void changedUpdate(DocumentEvent e) { updatePasswordFeedback(); }
+        };
+        passwordField.getDocument().addDocumentListener(feedback);
+        confirmPasswordField.getDocument().addDocumentListener(feedback);
 
         // Primary submit button
         submitBtn.setMaximumSize(new Dimension(Integer.MAX_VALUE, 40));
@@ -172,6 +234,7 @@ public final class LoginDialog extends JDialog {
                 emailSection,
                 passwordSection,
                 confirmSection,
+                showPasswordWrap,
                 otpSection,
                 submitWrap,
                 resendWrap,
@@ -215,6 +278,8 @@ public final class LoginDialog extends JDialog {
         this.mode = target;
         clearBanner();
         clearFieldErrors();
+        strengthAttempted = false;
+        showPasswordBox.setSelected(false);
         confirmPasswordField.setText("");
         if (target == Mode.SIGN_IN && pendingVerifyEmail != null && !pendingVerifyEmail.isBlank()) {
             emailField.setText(pendingVerifyEmail);
@@ -248,6 +313,9 @@ public final class LoginDialog extends JDialog {
         boolean isSignIn = mode == Mode.SIGN_IN;
         boolean isSignUp = mode == Mode.SIGN_UP;
         boolean isVerify = mode == Mode.VERIFY_OTP;
+        if (!isSignUp) {
+            strengthAttempted = false;
+        }
 
         setTitle(switch (mode) {
             case SIGN_IN -> "Beenewed \u2014 Sign In";
@@ -275,9 +343,17 @@ public final class LoginDialog extends JDialog {
 
         emailSection.setVisible(!isVerify);
         passwordSection.setVisible(!isVerify);
-        passwordField.setPlaceholder(isSignUp ? "At least 6 characters" : "Enter your password");
+        passwordField.setPlaceholder(isSignUp
+                ? "Min " + PasswordPolicy.MIN_LENGTH + " chars with A-Z, a-z, 0-9 & a symbol"
+                : "Enter your password");
         confirmSection.setVisible(isSignUp);
+        strengthPanel.setVisible(isSignUp);
+        showPasswordWrap.setVisible(!isVerify);
+        if (isVerify) {
+            showPasswordBox.setSelected(false);
+        }
         otpSection.setVisible(isVerify);
+        updatePasswordFeedback();
 
         submitBtn.setText(defaultSubmitLabel());
         resendBtn.setText("Resend Code");
@@ -313,8 +389,9 @@ public final class LoginDialog extends JDialog {
         String email = emailField.getText().trim();
         char[] passwordChars = passwordField.getPassword();
         char[] confirmChars = confirmPasswordField.getPassword();
+        EnumSet<PasswordPolicy.Rule> unmetRules = PasswordPolicy.unmet(passwordChars);
+        boolean confirmMatches = Arrays.equals(passwordChars, confirmChars);
         String password = new String(passwordChars);
-        String confirm = new String(confirmChars);
         Arrays.fill(passwordChars, '\0');
         Arrays.fill(confirmChars, '\0');
 
@@ -331,13 +408,15 @@ public final class LoginDialog extends JDialog {
             return;
         }
         if (mode == Mode.SIGN_UP) {
-            if (password.length() < 6) {
+            if (!unmetRules.isEmpty()) {
+                strengthAttempted = true;
+                updatePasswordFeedback();
                 UI.setError(passwordField, true);
-                showBanner("Password must be at least 6 characters.", true);
+                showBanner(PasswordPolicy.describe(unmetRules), true);
                 passwordField.requestFocusInWindow();
                 return;
             }
-            if (!password.equals(confirm)) {
+            if (!confirmMatches) {
                 UI.setError(confirmPasswordField, true);
                 showBanner("Passwords do not match.", true);
                 confirmPasswordField.requestFocusInWindow();
@@ -497,6 +576,7 @@ public final class LoginDialog extends JDialog {
         passwordField.setEnabled(!isBusy);
         confirmPasswordField.setEnabled(!isBusy);
         otpField.setEnabled(!isBusy);
+        showPasswordBox.setEnabled(!isBusy);
         signInTab.setEnabled(!isBusy);
         signUpTab.setEnabled(!isBusy);
         switchModeLink.setEnabled(!isBusy);
@@ -557,6 +637,93 @@ public final class LoginDialog extends JDialog {
         wrap.setBorder(new EmptyBorder(0, 0, bottomGap, 0));
         wrap.add(content, BorderLayout.CENTER);
         return wrap;
+    }
+
+    // ---- Password feedback / visibility -------------------------------
+
+    /** Toggles the echo character on both password fields according to the checkbox. */
+    private void applyPasswordVisibility() {
+        char echo = showPasswordBox.isSelected() ? (char) 0 : defaultEchoChar;
+        passwordField.setEchoChar(echo);
+        confirmPasswordField.setEchoChar(echo);
+        passwordField.repaint();
+        confirmPasswordField.repaint();
+    }
+
+    /** Refreshes the strength checklist and the "passwords match" hint (sign-up only). */
+    private void updatePasswordFeedback() {
+        boolean hintWasVisible = matchHint.isVisible();
+        if (mode != Mode.SIGN_UP) {
+            matchHint.setVisible(false);
+            if (hintWasVisible) fitDialog();
+            return;
+        }
+        char[] pw = passwordField.getPassword();
+        char[] confirm = confirmPasswordField.getPassword();
+        EnumSet<PasswordPolicy.Rule> unmet = PasswordPolicy.unmet(pw);
+        boolean confirmEmpty = confirm.length == 0;
+        boolean matches = Arrays.equals(pw, confirm);
+        Arrays.fill(pw, '\0');
+        Arrays.fill(confirm, '\0');
+
+        for (Map.Entry<PasswordPolicy.Rule, JLabel> entry : ruleLabels.entrySet()) {
+            boolean met = !unmet.contains(entry.getKey());
+            Color color = met ? Theme.GREEN : (strengthAttempted ? Theme.RED : Theme.MUTED);
+            JLabel row = entry.getValue();
+            row.setIcon(Icons.of(met ? Icons.Type.CHECK_CIRCLE : Icons.Type.X_CIRCLE, 13, color));
+            row.setForeground(met ? Theme.GREEN : (strengthAttempted ? Theme.RED : Theme.TEXT_2));
+        }
+        if (unmet.isEmpty()) {
+            UI.setError(passwordField, false);
+        }
+
+        if (confirmEmpty) {
+            matchHint.setVisible(false);
+        } else {
+            matchHint.setText(matches ? "Passwords match" : "Passwords do not match");
+            matchHint.setForeground(matches ? Theme.GREEN : Theme.RED);
+            matchHint.setIcon(Icons.of(matches ? Icons.Type.CHECK_CIRCLE : Icons.Type.X_CIRCLE, 13,
+                    matches ? Theme.GREEN : Theme.RED));
+            matchHint.setVisible(true);
+            if (matches) UI.setError(confirmPasswordField, false);
+        }
+        if (hintWasVisible != matchHint.isVisible()) {
+            fitDialog();
+        }
+    }
+
+    /** Wipes typed secrets and hides passwords again whenever the dialog closes. */
+    @Override
+    public void dispose() {
+        showPasswordBox.setSelected(false);
+        passwordField.setText("");
+        confirmPasswordField.setText("");
+        otpField.setText("");
+        super.dispose();
+    }
+
+    private static JLabel fieldLabel(String text) {
+        JLabel l = UI.label(text, Theme.BODY_B, Theme.TEXT);
+        l.setBorder(new EmptyBorder(0, 0, 6, 0));
+        return l;
+    }
+
+    /** Vertical section whose height follows its visible children (hidden rows collapse cleanly). */
+    private static JPanel dynamicSection(int bottomGap, JComponent... children) {
+        JPanel panel = new JPanel() {
+            @Override
+            public Dimension getMaximumSize() {
+                return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+            }
+        };
+        panel.setOpaque(false);
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+        panel.setBorder(new EmptyBorder(0, 0, bottomGap, 0));
+        for (JComponent child : children) {
+            child.setAlignmentX(0f);
+            panel.add(child);
+        }
+        return panel;
     }
 
     private static JPanel labeledField(String label, JComponent field, int bottomGap) {

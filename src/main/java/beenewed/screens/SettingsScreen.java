@@ -75,7 +75,7 @@ public class SettingsScreen extends JPanel {
         emailBadge.add(new JLabel(Icons.of(Icons.Type.USER, 14, Theme.ACCENT)), BorderLayout.WEST);
         emailBadge.add(accountEmailLabel, BorderLayout.CENTER);
         UI.Btn logOutBtn = new UI.Btn("Log Out", Icons.Type.EXTERNAL, UI.Kind.DANGER);
-        logOutBtn.addActionListener(e -> App.get().logout());
+        logOutBtn.addActionListener(e -> App.get().confirmAndLogout());
         JPanel logOutRow = UI.clear(new FlowLayout(FlowLayout.LEFT, 0, 0));
         logOutRow.add(logOutBtn);
         account.add(UI.vstack(0,

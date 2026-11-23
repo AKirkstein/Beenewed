@@ -10,6 +10,8 @@ import com.beenewed.supabase.SupabaseConfig;
 import com.beenewed.supabase.SupabaseException;
 import com.beenewed.supabase.SupabaseRestClient;
 
+import javax.accessibility.AccessibleContext;
+import javax.accessibility.AccessibleRole;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
@@ -81,6 +83,9 @@ public class App extends JFrame {
 
     /** Clears the active Supabase session, hides the main window, and reopens the login dialog. */
     public void logout() {
+        closeProfileMenu();
+        // Clears the in-memory session immediately; the server-side revoke runs asynchronously
+        // (the JVM stays alive for the login dialog, so the request completes).
         authService.signOut();
         Store.reset();
         setVisible(false);
@@ -90,6 +95,88 @@ public class App extends JFrame {
         Theme.apply(false);
         installUIColors();
         SwingUtilities.invokeLater(() -> launchWithLogin(authService, restClient));
+    }
+
+    /** Asks for confirmation, then signs out. Used by the profile menu and the Settings screen. */
+    public void confirmAndLogout() {
+        int choice = JOptionPane.showConfirmDialog(
+                this,
+                "Sign out of Beenewed?\nYou will need to sign in again to access your subscriptions.",
+                "Sign Out",
+                JOptionPane.OK_CANCEL_OPTION,
+                JOptionPane.QUESTION_MESSAGE);
+        if (choice == JOptionPane.OK_OPTION) {
+            logout();
+        }
+    }
+
+    // ---- Profile / account menu ------------------------------------------
+    private ProfileMenu profileMenu;
+    private long profileMenuClosedAt;
+
+    private void showProfileMenu(JComponent anchor) {
+        if (profileMenu != null && profileMenu.isVisible()) {
+            closeProfileMenu();
+            return;
+        }
+        // The same mouse press that dismissed the popup should not immediately reopen it.
+        if (System.currentTimeMillis() - profileMenuClosedAt < 250) {
+            return;
+        }
+        profileMenu = new ProfileMenu(
+                getCurrentUserEmail(),
+                authService.getSignedInAt(),
+                Theme.isDark(),
+                new ProfileMenu.Actions(
+                        () -> show(Screen.SETTINGS),
+                        () -> setDarkMode(!Theme.isDark()),
+                        this::refreshDataFromServer,
+                        () -> SwingUtilities.invokeLater(this::confirmAndLogout)));
+        profileMenu.addPopupMenuListener(new javax.swing.event.PopupMenuListener() {
+            public void popupMenuWillBecomeVisible(javax.swing.event.PopupMenuEvent e) {}
+            public void popupMenuWillBecomeInvisible(javax.swing.event.PopupMenuEvent e) { profileMenuClosedAt = System.currentTimeMillis(); }
+            public void popupMenuCanceled(javax.swing.event.PopupMenuEvent e) {}
+        });
+        profileMenu.showBelow(anchor);
+    }
+
+    private void closeProfileMenu() {
+        if (profileMenu != null) {
+            profileMenu.setVisible(false);
+            profileMenu = null;
+        }
+    }
+
+    /** Re-fetches all user data from Supabase in the background, then refreshes the screen. */
+    private void refreshDataFromServer() {
+        setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
+        new SwingWorker<Void, Void>() {
+            @Override
+            protected Void doInBackground() {
+                Store.get().refresh();
+                return null;
+            }
+
+            @Override
+            protected void done() {
+                setCursor(Cursor.getDefaultCursor());
+                try {
+                    get();
+                    Store.get().changed();
+                } catch (InterruptedException error) {
+                    Thread.currentThread().interrupt();
+                } catch (java.util.concurrent.ExecutionException error) {
+                    Throwable cause = error.getCause();
+                    if (cause instanceof RuntimeException runtime) {
+                        Common.showBackendError(App.this, runtime);
+                    } else {
+                        JOptionPane.showMessageDialog(App.this,
+                                cause == null ? "Unable to refresh data." : cause.getMessage(),
+                                "Refresh failed", JOptionPane.ERROR_MESSAGE);
+                    }
+                }
+            }
+        }.execute();
     }
 
     /** Builds (or rebuilds) every component with the current Theme colours. */
@@ -163,16 +250,68 @@ public class App extends JFrame {
         bellWrap.add(bell, JLayeredPane.DEFAULT_LAYER);
         bellWrap.add(bellBadge, JLayeredPane.PALETTE_LAYER);
 
-        // Profile icon
-        String profileTip = "Signed in as " + getCurrentUserEmail();
-        JComponent profile = new JComponent() {
-            { setPreferredSize(new Dimension(32, 32)); setMaximumSize(getPreferredSize()); setToolTipText(profileTip); }
+        // Profile icon: opens the account popover (click, Enter, Space, or Shift+F10)
+        String profileTip = "Account \u2013 " + getCurrentUserEmail();
+        JComponent profile = new JPanel(null) {
+            boolean hover;
+            {
+                setOpaque(false);
+                setPreferredSize(new Dimension(32, 32));
+                setMaximumSize(getPreferredSize());
+                setToolTipText(profileTip);
+                setFocusable(true);
+                setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+                AccessibleContext ctx = getAccessibleContext();
+                if (ctx != null) {
+                    ctx.setAccessibleName("Account menu");
+                    ctx.setAccessibleDescription(profileTip);
+                }
+                addMouseListener(new MouseAdapter() {
+                    @Override public void mouseEntered(MouseEvent e) { hover = true; repaint(); }
+                    @Override public void mouseExited(MouseEvent e) { hover = false; repaint(); }
+                    @Override public void mousePressed(MouseEvent e) {
+                        if (SwingUtilities.isLeftMouseButton(e)) { requestFocusInWindow(); showProfileMenu(this_()); }
+                    }
+                });
+                addFocusListener(new FocusAdapter() {
+                    @Override public void focusGained(FocusEvent e) { repaint(); }
+                    @Override public void focusLost(FocusEvent e) { repaint(); }
+                });
+                Action open = new AbstractAction() {
+                    public void actionPerformed(ActionEvent e) { showProfileMenu(this_()); }
+                };
+                getInputMap(WHEN_FOCUSED).put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "openProfile");
+                getInputMap(WHEN_FOCUSED).put(KeyStroke.getKeyStroke(KeyEvent.VK_SPACE, 0), "openProfile");
+                getInputMap(WHEN_FOCUSED).put(KeyStroke.getKeyStroke(KeyEvent.VK_F10, InputEvent.SHIFT_DOWN_MASK), "openProfile");
+                getInputMap(WHEN_FOCUSED).put(KeyStroke.getKeyStroke(KeyEvent.VK_CONTEXT_MENU, 0), "openProfile");
+                getActionMap().put("openProfile", open);
+            }
+            private JComponent this_() { return this; }
+            @Override
+            public AccessibleContext getAccessibleContext() {
+                if (accessibleContext == null) {
+                    accessibleContext = new AccessibleJPanel() {
+                        @Override
+                        public AccessibleRole getAccessibleRole() {
+                            return AccessibleRole.PUSH_BUTTON;
+                        }
+                    };
+                }
+                return accessibleContext;
+            }
             @Override protected void paintComponent(Graphics g0) {
                 Graphics2D g = (Graphics2D) g0.create(); UI.aa(g);
-                g.setColor(Theme.PRIMARY_LIGHT);
+                boolean active = hover || isFocusOwner();
+                g.setColor(active ? Theme.SOFT_HOVER : Theme.PRIMARY_LIGHT);
                 g.fillOval(0, 0, getWidth() - 1, getHeight() - 1);
-                g.setColor(Theme.BORDER_STRONG);
-                g.drawOval(0, 0, getWidth() - 1, getHeight() - 1);
+                if (active) {
+                    g.setColor(Theme.PRIMARY);
+                    g.setStroke(new BasicStroke(2f));
+                    g.drawOval(1, 1, getWidth() - 3, getHeight() - 3);
+                } else {
+                    g.setColor(Theme.BORDER_STRONG);
+                    g.drawOval(0, 0, getWidth() - 1, getHeight() - 1);
+                }
                 Icons.of(Icons.Type.USER, 18, Theme.ACCENT).paintIcon(this, g, (getWidth() - 18) / 2, (getHeight() - 18) / 2);
                 g.dispose();
             }
@@ -347,7 +486,9 @@ public class App extends JFrame {
     }
 
     private void shutdown() {
-        authService.signOut();
+        closeProfileMenu();
+        // Wait briefly so the server-side revoke is actually sent before the JVM exits.
+        authService.signOutAndWait(java.time.Duration.ofSeconds(3));
         Store.reset();
         dispose();
         System.exit(0);
