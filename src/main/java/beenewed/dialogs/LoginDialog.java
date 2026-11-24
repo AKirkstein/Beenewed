@@ -26,13 +26,14 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
 /**
- * Startup authentication dialog supporting Supabase Sign In, Create Account, and
- * Email OTP verification flows, styled with Beenewed's Swing theme.
+ * Startup authentication dialog supporting Supabase Sign In, Create Account,
+ * Email OTP verification, and Forgot Password recovery flows, styled with
+ * Beenewed's Swing theme.
  */
 public final class LoginDialog extends JDialog {
     private static final int DIALOG_WIDTH = 440;
 
-    private enum Mode { SIGN_IN, SIGN_UP, VERIFY_OTP }
+    private enum Mode { SIGN_IN, SIGN_UP, VERIFY_OTP, FORGOT_PASSWORD, RESET_PASSWORD }
 
     private final SupabaseAuthService authService;
     private final Runnable onAuthenticatedLoad;
@@ -42,6 +43,7 @@ public final class LoginDialog extends JDialog {
 
     private Mode mode = Mode.SIGN_IN;
     private String pendingVerifyEmail;
+    private String pendingResetEmail;
     private boolean authenticated = false;
     private boolean offlineOpened = false;
     private boolean busy = false;
@@ -70,33 +72,41 @@ public final class LoginDialog extends JDialog {
     private final JPanel verifyEmailWrap;
 
     private final UI.TextField emailField = new UI.TextField("you@example.com");
+    private final UI.TextField recoveryCodeField = new UI.TextField("Enter 6-digit recovery code");
     private final UI.PasswordField passwordField = new UI.PasswordField("Enter your password");
     private final UI.PasswordField confirmPasswordField = new UI.PasswordField("Re-enter your password");
     private final UI.TextField otpField = new UI.TextField("Enter 8-digit verification code");
     /** Look-and-feel echo character captured before any reveal toggling. */
     private final char defaultEchoChar = passwordField.getEchoChar() != 0 ? passwordField.getEchoChar() : '\u2022';
 
-    // Live password-strength checklist (Create Account mode only)
+    // Live password-strength checklist (Create Account & Reset Password modes)
     private final Map<PasswordPolicy.Rule, JLabel> ruleLabels = new EnumMap<>(PasswordPolicy.Rule.class);
     private final JPanel strengthPanel;
     private final JLabel matchHint = UI.label(" ", Theme.SMALL, Theme.MUTED);
     private boolean strengthAttempted = false;
 
-    // Show-password toggle covering both password fields
+    // Show-password toggle and Forgot Password link
     private final JCheckBox showPasswordBox = new JCheckBox("Show password");
+    private final UI.Btn forgotPasswordLink = UI.link("Forgot Password?");
     private final JPanel showPasswordWrap;
 
+    private final JLabel passwordFieldLabel = fieldLabel("Password");
+    private final JLabel confirmFieldLabel = fieldLabel("Confirm Password");
     private final JPanel emailSection;
+    private final JPanel recoveryCodeSection;
     private final JPanel passwordSection;
     private final JPanel confirmSection;
     private final JPanel otpSection;
 
     private final UI.Btn submitBtn = UI.primary("Sign In", null);
+    private final UI.Btn backToSignInBtn = UI.secondary("Back to Sign In", null);
+    private final JPanel backToSignInWrap;
     private final UI.Btn offlineBtn = UI.secondary("Continue Offline (Read-Only)", Icons.Type.CLOCK);
     private final JPanel offlineWrap;
     private final UI.Btn resendBtn = UI.secondary("Resend Code", null);
     private final JPanel resendWrap;
     private final UI.Btn switchModeLink = UI.link("Don't have an account? Create one");
+    private final JPanel linkWrap;
 
     public LoginDialog(Frame owner, SupabaseAuthService authService) {
         this(owner, authService, null, null, null);
@@ -232,14 +242,18 @@ public final class LoginDialog extends JDialog {
         matchHint.setBorder(new EmptyBorder(6, 2, 0, 0));
         matchHint.setVisible(false);
 
-        passwordSection = dynamicSection(12, fieldLabel("Password"), passwordField, strengthPanel);
-        confirmSection = dynamicSection(12, fieldLabel("Confirm Password"), confirmPasswordField, matchHint);
+        InputFilters.installDigitsFilter(recoveryCodeField, InputFilters.RECOVERY_CODE_MAX_LENGTH);
+        recoveryCodeSection = labeledField("Recovery Code", recoveryCodeField, 12);
+        recoveryCodeSection.setVisible(false);
+
+        passwordSection = dynamicSection(12, passwordFieldLabel, passwordField, strengthPanel);
+        confirmSection = dynamicSection(12, confirmFieldLabel, confirmPasswordField, matchHint);
         confirmSection.setVisible(false);
         InputFilters.installDigitsFilter(otpField, InputFilters.OTP_CODE_LENGTH);
         otpSection = labeledField("Verification Code", otpField, 14);
         otpSection.setVisible(false);
 
-        // Show password (applies to both Password and Confirm Password)
+        // Show password (applies to both Password and Confirm Password) + Forgot Password? link (Sign In only)
         showPasswordBox.setOpaque(false);
         showPasswordBox.setFont(Theme.SMALL);
         showPasswordBox.setForeground(Theme.TEXT_2);
@@ -247,9 +261,26 @@ public final class LoginDialog extends JDialog {
         showPasswordBox.setMnemonic(KeyEvent.VK_H);
         showPasswordBox.setToolTipText("Reveal the characters you typed (Alt+H)");
         showPasswordBox.addItemListener(e -> applyPasswordVisibility());
-        JPanel showRow = UI.clear(new FlowLayout(FlowLayout.LEFT, 0, 0));
-        showRow.add(showPasswordBox);
+        forgotPasswordLink.setToolTipText("Reset your password via email");
+        forgotPasswordLink.addActionListener(e -> openForgotPassword());
+        JPanel showRow = UI.clear(new BorderLayout(8, 0));
+        showRow.add(showPasswordBox, BorderLayout.WEST);
+        showRow.add(forgotPasswordLink, BorderLayout.EAST);
         showPasswordWrap = wrapSection(showRow, 10);
+
+        DocumentListener clearEmailErr = new DocumentListener() {
+            public void insertUpdate(DocumentEvent e) { UI.setError(emailField, false); }
+            public void removeUpdate(DocumentEvent e) { UI.setError(emailField, false); }
+            public void changedUpdate(DocumentEvent e) { UI.setError(emailField, false); }
+        };
+        emailField.getDocument().addDocumentListener(clearEmailErr);
+
+        DocumentListener clearRecoveryErr = new DocumentListener() {
+            public void insertUpdate(DocumentEvent e) { UI.setError(recoveryCodeField, false); }
+            public void removeUpdate(DocumentEvent e) { UI.setError(recoveryCodeField, false); }
+            public void changedUpdate(DocumentEvent e) { UI.setError(recoveryCodeField, false); }
+        };
+        recoveryCodeField.getDocument().addDocumentListener(clearRecoveryErr);
 
         DocumentListener feedback = new DocumentListener() {
             public void insertUpdate(DocumentEvent e) { updatePasswordFeedback(); }
@@ -266,6 +297,13 @@ public final class LoginDialog extends JDialog {
         JPanel submitWrap = wrapSection(submitBtn, 10);
         submitWrap.setBorder(new EmptyBorder(6, 0, 10, 0));
 
+        // Back to Sign In button (Forgot Password & Reset Password modes)
+        backToSignInBtn.setMaximumSize(new Dimension(Integer.MAX_VALUE, 38));
+        backToSignInBtn.setPreferredSize(new Dimension(DIALOG_WIDTH - 100, 38));
+        backToSignInBtn.addActionListener(e -> returnToSignIn());
+        backToSignInWrap = wrapSection(backToSignInBtn, 4);
+        backToSignInWrap.setVisible(false);
+
         // Offline read-only fallback button (visible on Sign In only when offline AND an active local session exists)
         offlineBtn.setMaximumSize(new Dimension(Integer.MAX_VALUE, 38));
         offlineBtn.setPreferredSize(new Dimension(DIALOG_WIDTH - 100, 38));
@@ -273,16 +311,16 @@ public final class LoginDialog extends JDialog {
         offlineWrap = wrapSection(offlineBtn, 10);
         offlineWrap.setVisible(false);
 
-        // Resend code button (Verify Email mode only)
+        // Resend code button (Verify Email and Reset Password modes)
         resendBtn.setMaximumSize(new Dimension(Integer.MAX_VALUE, 38));
         resendBtn.setPreferredSize(new Dimension(DIALOG_WIDTH - 100, 38));
         resendBtn.addActionListener(e -> resendCode());
-        resendWrap = wrapSection(resendBtn, 12);
+        resendWrap = wrapSection(resendBtn, 10);
         resendWrap.setVisible(false);
 
         // Bottom link
         switchModeLink.addActionListener(e -> handleSwitchLink());
-        JPanel linkWrap = UI.clear(new FlowLayout(FlowLayout.CENTER, 0, 0));
+        linkWrap = UI.clear(new FlowLayout(FlowLayout.CENTER, 0, 0));
         linkWrap.setBorder(new EmptyBorder(2, 0, 0, 0));
         linkWrap.add(switchModeLink);
 
@@ -305,13 +343,15 @@ public final class LoginDialog extends JDialog {
                 bannerWrap,
                 verifyEmailWrap,
                 emailSection,
+                recoveryCodeSection,
                 passwordSection,
                 confirmSection,
                 showPasswordWrap,
                 otpSection,
                 submitWrap,
-                offlineWrap,
                 resendWrap,
+                backToSignInWrap,
+                offlineWrap,
                 linkWrap
         }) {
             if (c instanceof JComponent jc) jc.setAlignmentX(0f);
@@ -326,7 +366,11 @@ public final class LoginDialog extends JDialog {
         getRootPane().registerKeyboardAction(
                 e -> {
                     if (!busy) {
-                        dispose();
+                        if (mode == Mode.FORGOT_PASSWORD || mode == Mode.RESET_PASSWORD) {
+                            returnToSignIn();
+                        } else {
+                            dispose();
+                        }
                     }
                 },
                 KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0),
@@ -463,17 +507,141 @@ public final class LoginDialog extends JDialog {
         return submitBtn.getText();
     }
 
+    boolean isForgotPasswordLinkVisibleForTest() {
+        return forgotPasswordLink.isVisible();
+    }
+
+    boolean isForgotPasswordLinkEnabledForTest() {
+        return forgotPasswordLink.isEnabled();
+    }
+
+    void clickForgotPasswordForTest() {
+        forgotPasswordLink.doClick();
+    }
+
+    boolean isForgotPasswordModeForTest() {
+        return mode == Mode.FORGOT_PASSWORD;
+    }
+
+    boolean isResetPasswordModeForTest() {
+        return mode == Mode.RESET_PASSWORD;
+    }
+
+    boolean isSignInModeForTest() {
+        return mode == Mode.SIGN_IN;
+    }
+
+    boolean isEmailEditableForTest() {
+        return emailField.isEditable();
+    }
+
+    void setRecoveryCodeForTest(String code) {
+        recoveryCodeField.setText(code);
+    }
+
+    void setPasswordForTest(String password) {
+        passwordField.setText(password);
+    }
+
+    void setConfirmPasswordForTest(String confirmPassword) {
+        confirmPasswordField.setText(confirmPassword);
+    }
+
+    boolean isResendVisibleForTest() {
+        return resendWrap.isVisible();
+    }
+
+    void clickResendForTest() {
+        resendBtn.doClick();
+    }
+
+    boolean isBackToSignInVisibleForTest() {
+        return backToSignInWrap.isVisible();
+    }
+
+    boolean isBackToSignInEnabledForTest() {
+        return backToSignInBtn.isEnabled();
+    }
+
+    void clickBackToSignInForTest() {
+        backToSignInBtn.doClick();
+    }
+
+    void setEmailForTest(String email) {
+        emailField.setText(email);
+    }
+
+    String getEmailForTest() {
+        return emailField.getText();
+    }
+
+    void clickSubmitForTest() {
+        submitBtn.doClick();
+    }
+
+    boolean isBannerVisibleForTest() {
+        return bannerWrap.isVisible();
+    }
+
+    String getBannerTextForTest() {
+        return bannerText.getText();
+    }
+
+    Color getBannerForegroundForTest() {
+        return bannerText.getForeground();
+    }
+
+    boolean isBusyForTest() {
+        return busy;
+    }
+
+    boolean isPasswordSectionVisibleForTest() {
+        return passwordSection.isVisible();
+    }
+
+    private void openForgotPassword() {
+        if (busy) {
+            return;
+        }
+        switchMode(Mode.FORGOT_PASSWORD);
+        SwingUtilities.invokeLater(emailField::requestFocusInWindow);
+    }
+
+    private void returnToSignIn() {
+        if (busy) {
+            return;
+        }
+        switchMode(Mode.SIGN_IN);
+        SwingUtilities.invokeLater(() -> {
+            if (emailField.getText().isBlank()) {
+                emailField.requestFocusInWindow();
+            } else {
+                passwordField.requestFocusInWindow();
+            }
+        });
+    }
+
     private void switchMode(Mode target) {
         if (busy || this.mode == target) {
             return;
         }
+        Mode previous = this.mode;
         this.mode = target;
         clearBanner();
         clearFieldErrors();
         strengthAttempted = false;
         showPasswordBox.setSelected(false);
         confirmPasswordField.setText("");
-        if (target == Mode.SIGN_IN && pendingVerifyEmail != null && !pendingVerifyEmail.isBlank()) {
+        if (target == Mode.FORGOT_PASSWORD || target == Mode.RESET_PASSWORD) {
+            passwordField.setText("");
+            recoveryCodeField.setText("");
+        }
+        if (target == Mode.SIGN_IN) {
+            pendingResetEmail = null;
+            recoveryCodeField.setText("");
+        }
+        if (target == Mode.SIGN_IN && previous == Mode.VERIFY_OTP
+                && pendingVerifyEmail != null && !pendingVerifyEmail.isBlank()) {
             emailField.setText(pendingVerifyEmail);
             passwordField.setText("");
             otpField.setText("");
@@ -488,16 +656,7 @@ public final class LoginDialog extends JDialog {
         }
         switch (mode) {
             case SIGN_IN -> switchMode(Mode.SIGN_UP);
-            case SIGN_UP, VERIFY_OTP -> {
-                switchMode(Mode.SIGN_IN);
-                SwingUtilities.invokeLater(() -> {
-                    if (emailField.getText().isBlank()) {
-                        emailField.requestFocusInWindow();
-                    } else {
-                        passwordField.requestFocusInWindow();
-                    }
-                });
-            }
+            case SIGN_UP, VERIFY_OTP, FORGOT_PASSWORD, RESET_PASSWORD -> returnToSignIn();
         }
     }
 
@@ -505,7 +664,10 @@ public final class LoginDialog extends JDialog {
         boolean isSignIn = mode == Mode.SIGN_IN;
         boolean isSignUp = mode == Mode.SIGN_UP;
         boolean isVerify = mode == Mode.VERIFY_OTP;
-        if (!isSignUp) {
+        boolean isForgot = mode == Mode.FORGOT_PASSWORD;
+        boolean isReset = mode == Mode.RESET_PASSWORD;
+        boolean needsStrength = isSignUp || isReset;
+        if (!needsStrength) {
             strengthAttempted = false;
         }
 
@@ -513,9 +675,11 @@ public final class LoginDialog extends JDialog {
             case SIGN_IN -> "Beenewed \u2014 Sign In";
             case SIGN_UP -> "Beenewed \u2014 Create Account";
             case VERIFY_OTP -> "Beenewed \u2014 Verify Email";
+            case FORGOT_PASSWORD -> "Beenewed \u2014 Forgot Password";
+            case RESET_PASSWORD -> "Beenewed \u2014 Reset Password";
         });
 
-        modeBarWrap.setVisible(!isVerify);
+        modeBarWrap.setVisible(isSignIn || isSignUp);
         signInTab.setKind(isSignIn ? UI.Kind.SOFT : UI.Kind.GHOST);
         signUpTab.setKind(isSignUp ? UI.Kind.SOFT : UI.Kind.GHOST);
 
@@ -523,25 +687,36 @@ public final class LoginDialog extends JDialog {
             case SIGN_IN -> "Welcome back";
             case SIGN_UP -> "Create your account";
             case VERIFY_OTP -> "Verify your email";
+            case FORGOT_PASSWORD -> "Reset your password";
+            case RESET_PASSWORD -> "Enter recovery code";
         });
         subtitleLabel.setText(switch (mode) {
             case SIGN_IN -> "Sign in to access your Beenewed subscriptions and preferences.";
             case SIGN_UP -> "Set up an account to store your subscriptions securely in Supabase.";
             case VERIFY_OTP -> "Enter the verification code sent to your email address.";
+            case FORGOT_PASSWORD -> "Enter your account email and we'll send a 6-digit recovery code.";
+            case RESET_PASSWORD -> "Enter the 6-digit code from your email and choose a new password.";
         });
 
         verifyEmailLabel.setText(pendingVerifyEmail == null ? "" : pendingVerifyEmail);
         verifyEmailWrap.setVisible(isVerify);
 
         emailSection.setVisible(!isVerify);
-        passwordSection.setVisible(!isVerify);
-        passwordField.setPlaceholder(isSignUp
+        emailField.setEditable(!isReset);
+        recoveryCodeSection.setVisible(isReset);
+
+        passwordFieldLabel.setText(isReset ? "New Password" : "Password");
+        confirmFieldLabel.setText(isReset ? "Confirm New Password" : "Confirm Password");
+        passwordSection.setVisible(isSignIn || isSignUp || isReset);
+        passwordField.setPlaceholder(needsStrength
                 ? "Min " + PasswordPolicy.MIN_LENGTH + " chars with A-Z, a-z, 0-9 & a symbol"
                 : "Enter your password");
-        confirmSection.setVisible(isSignUp);
-        strengthPanel.setVisible(isSignUp);
-        showPasswordWrap.setVisible(!isVerify);
-        if (isVerify) {
+        confirmPasswordField.setPlaceholder(isReset ? "Re-enter your new password" : "Re-enter your password");
+        confirmSection.setVisible(needsStrength);
+        strengthPanel.setVisible(needsStrength);
+        showPasswordWrap.setVisible(isSignIn || isSignUp || isReset);
+        forgotPasswordLink.setVisible(isSignIn);
+        if (!isSignIn && !isSignUp && !isReset) {
             showPasswordBox.setSelected(false);
         }
         otpSection.setVisible(isVerify);
@@ -562,6 +737,7 @@ public final class LoginDialog extends JDialog {
         }
 
         boolean canContinueOffline = networkOffline && activeOffline;
+        backToSignInWrap.setVisible(isForgot || isReset);
         offlineWrap.setVisible(isSignIn && canContinueOffline);
         if (canContinueOffline) {
             offlineBtn.setToolTipText("View cached read-only data for " + activeSnapshot.get().email());
@@ -569,12 +745,13 @@ public final class LoginDialog extends JDialog {
             offlineBtn.setToolTipText(null);
         }
         resendBtn.setText("Resend Code");
-        resendWrap.setVisible(isVerify);
+        resendWrap.setVisible(isVerify || isReset);
 
+        linkWrap.setVisible(!isForgot && !isReset);
         switchModeLink.setText(switch (mode) {
             case SIGN_IN -> "Don't have an account? Create one";
             case SIGN_UP -> "Already have an account? Sign in";
-            case VERIFY_OTP -> "Back to Sign In";
+            case VERIFY_OTP, FORGOT_PASSWORD, RESET_PASSWORD -> "Back to Sign In";
         });
 
         applyInteractiveState(canContinueOffline);
@@ -585,6 +762,8 @@ public final class LoginDialog extends JDialog {
             case SIGN_IN -> "Sign In";
             case SIGN_UP -> "Create Account";
             case VERIFY_OTP -> "Verify Code";
+            case FORGOT_PASSWORD -> "Send Code";
+            case RESET_PASSWORD -> "Reset Password";
         };
     }
 
@@ -593,16 +772,21 @@ public final class LoginDialog extends JDialog {
             case SIGN_IN -> "Network required to sign in";
             case SIGN_UP -> "Network required to create account";
             case VERIFY_OTP -> "Network required to verify";
+            case FORGOT_PASSWORD -> "Network required to send code";
+            case RESET_PASSWORD -> "Network required to reset password";
         };
     }
 
     private void applyInteractiveState(boolean activeOffline) {
         boolean formEnabled = !busy && !networkOffline;
         emailField.setEnabled(formEnabled);
+        recoveryCodeField.setEnabled(formEnabled);
         passwordField.setEnabled(formEnabled);
         confirmPasswordField.setEnabled(formEnabled);
         otpField.setEnabled(formEnabled);
         showPasswordBox.setEnabled(formEnabled);
+        forgotPasswordLink.setEnabled(!busy);
+        backToSignInBtn.setEnabled(!busy);
         signInTab.setEnabled(!busy);
         signUpTab.setEnabled(!busy);
         switchModeLink.setEnabled(!busy);
@@ -626,6 +810,14 @@ public final class LoginDialog extends JDialog {
             submitVerifyOtp();
             return;
         }
+        if (mode == Mode.FORGOT_PASSWORD) {
+            submitForgotPassword();
+            return;
+        }
+        if (mode == Mode.RESET_PASSWORD) {
+            submitResetPassword();
+            return;
+        }
 
         String email = emailField.getText().trim();
         char[] passwordChars = passwordField.getPassword();
@@ -636,9 +828,9 @@ public final class LoginDialog extends JDialog {
         Arrays.fill(passwordChars, '\0');
         Arrays.fill(confirmChars, '\0');
 
-        if (email.isEmpty() || !email.contains("@")) {
+        if (!SupabaseAuthService.isValidEmail(email)) {
             UI.setError(emailField, true);
-            showBanner("Please enter a valid email address.", true);
+            showBanner(email.isEmpty() ? "Please enter your email address." : "Please enter a valid email address.", true);
             emailField.requestFocusInWindow();
             return;
         }
@@ -736,6 +928,166 @@ public final class LoginDialog extends JDialog {
         worker.execute();
     }
 
+    private void submitForgotPassword() {
+        String email = emailField.getText().trim();
+        if (email.isEmpty()) {
+            UI.setError(emailField, true);
+            showBanner("Please enter your email address.", true);
+            emailField.requestFocusInWindow();
+            return;
+        }
+        if (!SupabaseAuthService.isValidEmail(email)) {
+            UI.setError(emailField, true);
+            showBanner("Please enter a valid email address.", true);
+            emailField.requestFocusInWindow();
+            return;
+        }
+
+        final String targetEmail = email;
+        setBusy(true, "Sending code...", "Resend Code");
+
+        SwingWorker<Void, Void> worker = new SwingWorker<>() {
+            @Override
+            protected Void doInBackground() throws Exception {
+                authService.sendPasswordResetEmail(targetEmail);
+                return null;
+            }
+
+            @Override
+            protected void done() {
+                setBusy(false, defaultSubmitLabel(), "Resend Code");
+                try {
+                    get();
+                    pendingResetEmail = targetEmail;
+                    emailField.setText(pendingResetEmail);
+                    recoveryCodeField.setText("");
+                    passwordField.setText("");
+                    confirmPasswordField.setText("");
+                    strengthAttempted = false;
+                    showPasswordBox.setSelected(false);
+                    mode = Mode.RESET_PASSWORD;
+                    updateModeUI();
+                    showBanner(
+                            "Recovery code sent to " + pendingResetEmail
+                                    + ". Check your inbox or spam folder and enter the 6-digit code below.",
+                            false);
+                    SwingUtilities.invokeLater(recoveryCodeField::requestFocusInWindow);
+                } catch (InterruptedException error) {
+                    Thread.currentThread().interrupt();
+                    showBanner("Password reset request was interrupted. Please try again.", true);
+                } catch (ExecutionException error) {
+                    if (SupabaseRestClient.isConnectivityFailure(error.getCause())) {
+                        clearBanner();
+                        applyConnectivityState(false);
+                    } else {
+                        showBanner(
+                                errorMessage(error, "Unable to send recovery code. Please try again."),
+                                true);
+                    }
+                }
+            }
+        };
+        worker.execute();
+    }
+
+    private void submitResetPassword() {
+        String targetEmail = pendingResetEmail != null && !pendingResetEmail.isBlank()
+                ? pendingResetEmail
+                : emailField.getText().trim();
+        String code = recoveryCodeField.getText().trim();
+        char[] passwordChars = passwordField.getPassword();
+        char[] confirmChars = confirmPasswordField.getPassword();
+        EnumSet<PasswordPolicy.Rule> unmetRules = PasswordPolicy.unmet(passwordChars);
+        boolean confirmMatches = Arrays.equals(passwordChars, confirmChars);
+        String newPassword = new String(passwordChars);
+        Arrays.fill(passwordChars, '\0');
+        Arrays.fill(confirmChars, '\0');
+
+        if (!SupabaseAuthService.isValidEmail(targetEmail)) {
+            UI.setError(emailField, true);
+            showBanner("Please enter a valid email address.", true);
+            return;
+        }
+        if (code.isEmpty()) {
+            UI.setError(recoveryCodeField, true);
+            showBanner("Please enter the 6-digit recovery code from your email.", true);
+            recoveryCodeField.requestFocusInWindow();
+            return;
+        }
+        if (!InputFilters.isValidRecoveryCode(code)) {
+            UI.setError(recoveryCodeField, true);
+            showBanner("Recovery code must be 6 to 8 digits.", true);
+            recoveryCodeField.requestFocusInWindow();
+            return;
+        }
+        if (newPassword.isEmpty()) {
+            UI.setError(passwordField, true);
+            showBanner("Please enter a new password.", true);
+            passwordField.requestFocusInWindow();
+            return;
+        }
+        if (!unmetRules.isEmpty()) {
+            strengthAttempted = true;
+            updatePasswordFeedback();
+            UI.setError(passwordField, true);
+            showBanner(PasswordPolicy.describe(unmetRules), true);
+            passwordField.requestFocusInWindow();
+            return;
+        }
+        if (!confirmMatches) {
+            UI.setError(confirmPasswordField, true);
+            showBanner("Passwords do not match.", true);
+            confirmPasswordField.requestFocusInWindow();
+            return;
+        }
+
+        final String resetEmail = targetEmail;
+        setBusy(true, "Resetting password...", "Resend Code");
+
+        SwingWorker<Void, Void> worker = new SwingWorker<>() {
+            @Override
+            protected Void doInBackground() throws Exception {
+                authService.resetPasswordWithRecoveryCode(resetEmail, code, newPassword);
+                return null;
+            }
+
+            @Override
+            protected void done() {
+                setBusy(false, defaultSubmitLabel(), "Resend Code");
+                try {
+                    get();
+                    pendingResetEmail = null;
+                    mode = Mode.SIGN_IN;
+                    emailField.setText(resetEmail);
+                    recoveryCodeField.setText("");
+                    passwordField.setText("");
+                    confirmPasswordField.setText("");
+                    showPasswordBox.setSelected(false);
+                    updateModeUI();
+                    showBanner("Password updated successfully! You can now log in.", false);
+                    SwingUtilities.invokeLater(passwordField::requestFocusInWindow);
+                } catch (InterruptedException error) {
+                    Thread.currentThread().interrupt();
+                    showBanner("Password reset was interrupted. Please try again.", true);
+                } catch (ExecutionException error) {
+                    if (SupabaseRestClient.isConnectivityFailure(error.getCause())) {
+                        clearBanner();
+                        applyConnectivityState(false);
+                    } else {
+                        String msg = errorMessage(error, "Unable to reset password. Please try again.");
+                        String lower = msg.toLowerCase();
+                        if (lower.contains("code") || lower.contains("token") || lower.contains("otp") || lower.contains("expired")) {
+                            UI.setError(recoveryCodeField, true);
+                            recoveryCodeField.requestFocusInWindow();
+                        }
+                        showBanner(msg, true);
+                    }
+                }
+            }
+        };
+        worker.execute();
+    }
+
     private void submitVerifyOtp() {
         String code = otpField.getText().trim();
         if (!InputFilters.isValidVerificationCode(code)) {
@@ -789,19 +1141,25 @@ public final class LoginDialog extends JDialog {
     }
 
     private void resendCode() {
-        if (busy || networkOffline || mode != Mode.VERIFY_OTP || pendingVerifyEmail == null || pendingVerifyEmail.isBlank()) {
+        boolean isVerifyOtp = mode == Mode.VERIFY_OTP;
+        boolean isResetPassword = mode == Mode.RESET_PASSWORD;
+        String targetEmail = isVerifyOtp ? pendingVerifyEmail : isResetPassword ? pendingResetEmail : null;
+        if (busy || networkOffline || targetEmail == null || targetEmail.isBlank()) {
             return;
         }
         clearBanner();
         clearFieldErrors();
 
-        final String targetEmail = pendingVerifyEmail;
         setBusy(true, defaultSubmitLabel(), "Resending...");
 
         SwingWorker<Void, Void> worker = new SwingWorker<>() {
             @Override
             protected Void doInBackground() throws Exception {
-                authService.resendSignupOtp(targetEmail);
+                if (isResetPassword) {
+                    authService.sendPasswordResetEmail(targetEmail);
+                } else {
+                    authService.resendSignupOtp(targetEmail);
+                }
                 return null;
             }
 
@@ -810,8 +1168,12 @@ public final class LoginDialog extends JDialog {
                 setBusy(false, defaultSubmitLabel(), "Resend Code");
                 try {
                     get();
-                    showBanner("A new verification code has been sent to " + targetEmail + ".", false);
-                    SwingUtilities.invokeLater(otpField::requestFocusInWindow);
+                    showBanner(
+                            isResetPassword
+                                    ? "A new recovery code has been sent to " + targetEmail + "."
+                                    : "A new verification code has been sent to " + targetEmail + ".",
+                            false);
+                    SwingUtilities.invokeLater((isResetPassword ? recoveryCodeField : otpField)::requestFocusInWindow);
                 } catch (InterruptedException error) {
                     Thread.currentThread().interrupt();
                     showBanner("Resend request was interrupted. Please try again.", true);
@@ -820,7 +1182,12 @@ public final class LoginDialog extends JDialog {
                         clearBanner();
                         applyConnectivityState(false);
                     } else {
-                        showBanner(errorMessage(error, "Unable to resend verification code."), true);
+                        showBanner(
+                                errorMessage(error,
+                                        isResetPassword
+                                                ? "Unable to resend recovery code."
+                                                : "Unable to resend verification code."),
+                                true);
                     }
                 }
             }
@@ -854,6 +1221,7 @@ public final class LoginDialog extends JDialog {
 
     private void clearFieldErrors() {
         UI.setError(emailField, false);
+        UI.setError(recoveryCodeField, false);
         UI.setError(passwordField, false);
         UI.setError(confirmPasswordField, false);
         UI.setError(otpField, false);
@@ -869,10 +1237,10 @@ public final class LoginDialog extends JDialog {
     private static String errorMessage(ExecutionException error, String fallback) {
         Throwable cause = error.getCause();
         if (cause instanceof SupabaseAuthException && cause.getMessage() != null && !cause.getMessage().isBlank()) {
-            return cause.getMessage();
+            return SupabaseAuthService.sanitizeErrorMessage(cause.getMessage(), fallback);
         }
         if (cause != null && cause.getMessage() != null && !cause.getMessage().isBlank()) {
-            return cause.getMessage();
+            return SupabaseAuthService.sanitizeErrorMessage(cause.getMessage(), fallback);
         }
         return fallback;
     }
@@ -901,10 +1269,10 @@ public final class LoginDialog extends JDialog {
         confirmPasswordField.repaint();
     }
 
-    /** Refreshes the strength checklist and the "passwords match" hint (sign-up only). */
+    /** Refreshes the strength checklist and the "passwords match" hint (sign-up & password reset). */
     private void updatePasswordFeedback() {
         boolean hintWasVisible = matchHint.isVisible();
-        if (mode != Mode.SIGN_UP) {
+        if (mode != Mode.SIGN_UP && mode != Mode.RESET_PASSWORD) {
             matchHint.setVisible(false);
             if (hintWasVisible) fitDialog();
             return;
@@ -947,6 +1315,7 @@ public final class LoginDialog extends JDialog {
     @Override
     public void dispose() {
         showPasswordBox.setSelected(false);
+        recoveryCodeField.setText("");
         passwordField.setText("");
         confirmPasswordField.setText("");
         otpField.setText("");

@@ -24,6 +24,9 @@ public final class InputFilters {
 
     /** Standard length of an email OTP verification code. */
     public static final int OTP_CODE_LENGTH = 8;
+    /** Allowed length range for a password recovery OTP code (6 digits default, up to 8 if customized). */
+    public static final int RECOVERY_CODE_MIN_LENGTH = 6;
+    public static final int RECOVERY_CODE_MAX_LENGTH = 8;
 
     /** Allows digits with at most one decimal point and up to 2 fractional digits while typing. */
     private static final Pattern DECIMAL_TYPING = Pattern.compile("^\\d*(?:\\.\\d{0,2})?$");
@@ -31,6 +34,9 @@ public final class InputFilters {
     private static final Pattern DECIMAL_COMPLETE = Pattern.compile("^(?:\\d+(?:\\.\\d{1,2})?|\\.\\d{1,2})$");
     /** Strict 8-digit verification code pattern. */
     private static final Pattern OTP_CODE_PATTERN = Pattern.compile("^\\d{" + OTP_CODE_LENGTH + "}$");
+    /** Numeric 6-to-8-digit recovery code pattern. */
+    private static final Pattern RECOVERY_CODE_PATTERN =
+            Pattern.compile("^\\d{" + RECOVERY_CODE_MIN_LENGTH + "," + RECOVERY_CODE_MAX_LENGTH + "}$");
 
     private static final DateTimeFormatter STRICT_SLASH_PADDED =
             DateTimeFormatter.ofPattern("MM/dd/uuuu", Locale.ENGLISH).withResolverStyle(ResolverStyle.STRICT);
@@ -66,6 +72,11 @@ public final class InputFilters {
     /** Returns {@code true} only if {@code text} (after trimming) is a strict 8-digit verification code. */
     public static boolean isValidVerificationCode(String text) {
         return text != null && OTP_CODE_PATTERN.matcher(text.trim()).matches();
+    }
+
+    /** Returns {@code true} only if {@code text} (after trimming) is a numeric 6-to-8-digit recovery code. */
+    public static boolean isValidRecoveryCode(String text) {
+        return text != null && RECOVERY_CODE_PATTERN.matcher(text.trim()).matches();
     }
 
     /**

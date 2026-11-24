@@ -178,4 +178,18 @@ class InputFiltersTest {
         assertFalse(InputFilters.isValidVerificationCode("1234abcd"));
         assertFalse(InputFilters.isValidVerificationCode("dfddfsfdsfsfsf"));
     }
+
+    @Test
+    void isValidRecoveryCodeAcceptsSixToEightDigitsAndRejectsInvalid() {
+        assertTrue(InputFilters.isValidRecoveryCode("123456"));
+        assertTrue(InputFilters.isValidRecoveryCode(" 001234 "));
+        assertTrue(InputFilters.isValidRecoveryCode("12345678"));
+
+        assertFalse(InputFilters.isValidRecoveryCode(null));
+        assertFalse(InputFilters.isValidRecoveryCode(""));
+        assertFalse(InputFilters.isValidRecoveryCode("   "));
+        assertFalse(InputFilters.isValidRecoveryCode("12345"));
+        assertFalse(InputFilters.isValidRecoveryCode("123456789"));
+        assertFalse(InputFilters.isValidRecoveryCode("1234ab"));
+    }
 }

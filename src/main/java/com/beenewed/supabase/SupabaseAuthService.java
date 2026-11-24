@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.EnumSet;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
@@ -21,6 +22,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.regex.Pattern;
 
 /**
  * Handles Supabase GoTrue authentication ({@code /auth/v1/*}) and keeps the active
@@ -42,6 +44,9 @@ public final class SupabaseAuthService implements AutoCloseable {
     static final Duration REFRESH_MARGIN = Duration.ofSeconds(60);
     private static final Duration MIN_REFRESH_DELAY = Duration.ofSeconds(5);
     private static final Duration REFRESH_RETRY_DELAY = Duration.ofSeconds(30);
+    private static final int MAX_ERROR_MESSAGE_LENGTH = 240;
+    private static final Pattern EMAIL_PATTERN = Pattern.compile(
+            "^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$");
 
     private final SupabaseConfig config;
     private final HttpClient http;
@@ -172,6 +177,122 @@ public final class SupabaseAuthService implements AutoCloseable {
         SupabaseSession session = parseSession(body, cleanEmail, null, Instant.now());
         installSession(session);
         return session;
+    }
+
+    /**
+     * Requests a password recovery email via Supabase Auth ({@code POST /auth/v1/recover}).
+     * Does not create or alter any local session.
+     */
+    public void sendPasswordResetEmail(String email) throws SupabaseAuthException {
+        JsonObject payload = buildPasswordRecoveryPayload(email);
+
+        HttpResponse<String> response = send(
+                jsonPost("/auth/v1/recover", payload),
+                "Unable to send password reset email");
+        int status = response.statusCode();
+        if (status < 200 || status >= 300) {
+            throw new SupabaseAuthException(friendlyRecoveryError(status, response.body()));
+        }
+    }
+
+    /**
+     * Builds the JSON payload sent to Supabase Auth's {@code /auth/v1/recover} endpoint.
+     */
+    public static JsonObject buildPasswordRecoveryPayload(String email) throws SupabaseAuthException {
+        String cleanEmail = requireEmail(email);
+        JsonObject payload = new JsonObject();
+        payload.addProperty("email", cleanEmail);
+        return payload;
+    }
+
+    /**
+     * Builds the JSON payload sent to {@code POST /auth/v1/verify} for recovery OTP verification.
+     */
+    public static JsonObject buildRecoveryVerifyPayload(String email, String token) throws SupabaseAuthException {
+        String cleanEmail = requireEmail(email);
+        String cleanToken = requireRecoveryToken(token);
+        JsonObject payload = new JsonObject();
+        payload.addProperty("type", "recovery");
+        payload.addProperty("email", cleanEmail);
+        payload.addProperty("token", cleanToken);
+        return payload;
+    }
+
+    /**
+     * Builds the JSON payload sent to {@code PUT /auth/v1/user} to set a new password.
+     */
+    public static JsonObject buildPasswordUpdatePayload(String newPassword) throws SupabaseAuthException {
+        requirePassword(newPassword);
+        requireStrongPassword(newPassword);
+        JsonObject payload = new JsonObject();
+        payload.addProperty("password", newPassword);
+        return payload;
+    }
+
+    /**
+     * Completes an in-app password reset using a recovery OTP code:
+     * <ol>
+     *   <li>Verifies the recovery code via {@code POST /auth/v1/verify} ({@code type=recovery})
+     *       to obtain a temporary authenticated recovery access token.</li>
+     *   <li>Updates the user's password via {@code PUT /auth/v1/user} using that token.</li>
+     *   <li>Revokes the temporary recovery session best-effort without modifying the local
+     *       app session so the user signs in cleanly with their new password.</li>
+     * </ol>
+     */
+    public void resetPasswordWithRecoveryCode(String email, String token, String newPassword)
+            throws SupabaseAuthException {
+        // Validate all inputs up front so invalid passwords never consume a single-use OTP.
+        JsonObject verifyPayload = buildRecoveryVerifyPayload(email, token);
+        JsonObject updatePayload = buildPasswordUpdatePayload(newPassword);
+
+        HttpResponse<String> verifyResponse = send(
+                jsonPost("/auth/v1/verify", verifyPayload),
+                "Unable to verify recovery code");
+        int verifyStatus = verifyResponse.statusCode();
+        if (verifyStatus < 200 || verifyStatus >= 300) {
+            throw new SupabaseAuthException(friendlyRecoveryVerifyError(verifyStatus, verifyResponse.body()));
+        }
+
+        JsonObject verifyBody = parseObject(verifyResponse.body());
+        String recoveryAccessToken = stringField(verifyBody, "access_token");
+        if (recoveryAccessToken == null || recoveryAccessToken.isBlank()) {
+            throw new SupabaseAuthException(
+                    "Unable to verify recovery code. Please request a new code and try again.");
+        }
+
+        try {
+            HttpResponse<String> updateResponse = send(
+                    authenticatedJsonPut("/auth/v1/user", recoveryAccessToken, updatePayload),
+                    "Unable to update password");
+            int updateStatus = updateResponse.statusCode();
+            if (updateStatus < 200 || updateStatus >= 300) {
+                throw new SupabaseAuthException(friendlyPasswordUpdateError(updateStatus, updateResponse.body()));
+            }
+        } finally {
+            revokeAsync(recoveryAccessToken);
+        }
+    }
+
+    /**
+     * Validates basic email format: non-empty, valid local part and domain with a TLD label.
+     */
+    public static boolean isValidEmail(String email) {
+        if (email == null) {
+            return false;
+        }
+        String trimmed = email.trim();
+        if (trimmed.isEmpty() || trimmed.length() > 254) {
+            return false;
+        }
+        int at = trimmed.indexOf('@');
+        if (at <= 0 || at > 64) {
+            return false;
+        }
+        String local = trimmed.substring(0, at);
+        if (local.startsWith(".") || local.endsWith(".") || local.contains("..")) {
+            return false;
+        }
+        return EMAIL_PATTERN.matcher(trimmed).matches();
     }
 
     // ---------------------------------------------------------------------
@@ -461,6 +582,18 @@ public final class SupabaseAuthService implements AutoCloseable {
                 .build();
     }
 
+    private HttpRequest authenticatedJsonPut(String path, String accessToken, JsonObject payload) {
+        return HttpRequest.newBuilder()
+                .uri(URI.create(config.url() + path))
+                .timeout(REQUEST_TIMEOUT)
+                .header("apikey", config.anonKey())
+                .header("Authorization", "Bearer " + accessToken)
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json")
+                .PUT(HttpRequest.BodyPublishers.ofString(gson.toJson(payload), StandardCharsets.UTF_8))
+                .build();
+    }
+
     private HttpResponse<String> send(HttpRequest request, String fallbackMessage) throws SupabaseAuthException {
         try {
             return http.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
@@ -469,7 +602,7 @@ public final class SupabaseAuthService implements AutoCloseable {
             throw new SupabaseAuthException(fallbackMessage + ": request was interrupted.", error);
         } catch (IOException error) {
             throw new SupabaseAuthException(
-                    fallbackMessage + ": could not reach Supabase (" + error.getMessage() + ").",
+                    fallbackMessage + ": could not reach Supabase. Please check your internet connection and try again.",
                     error);
         }
     }
@@ -535,6 +668,56 @@ public final class SupabaseAuthService implements AutoCloseable {
         return element.getAsJsonObject();
     }
 
+    private static String friendlyRecoveryError(int status, String body) {
+        if (status == 401 || status == 403) {
+            return "Password reset is currently unavailable. Please check your configuration or try again later.";
+        }
+        if (status == 429) {
+            return sanitizeErrorMessage(
+                    extractError(body, null),
+                    "Too many password reset requests. Please wait a few minutes and try again.");
+        }
+        if (status >= 500) {
+            return "The authentication service is temporarily unavailable. Please try again later.";
+        }
+        if (status == 400 || status == 422) {
+            return sanitizeErrorMessage(
+                    extractError(body, null),
+                    "Please enter a valid email address and try again.");
+        }
+        return sanitizeErrorMessage(
+                extractError(body, null),
+                "Unable to send password reset email. Please try again.");
+    }
+
+    /**
+     * Filters out raw HTML, stack traces, excessively long strings, or accidental token/key
+     * substrings so user-facing error messages stay readable and never leak secrets.
+     */
+    public static String sanitizeErrorMessage(String message, String fallback) {
+        if (message == null || message.isBlank()) {
+            return fallback;
+        }
+        String trimmed = message.trim();
+        if (trimmed.length() > MAX_ERROR_MESSAGE_LENGTH) {
+            return fallback;
+        }
+        String lower = trimmed.toLowerCase(Locale.ROOT);
+        if (lower.contains("<html")
+                || lower.contains("<!doctype")
+                || lower.contains("bearer ")
+                || lower.contains("apikey")
+                || lower.contains("api_key")
+                || lower.contains("access_token")
+                || lower.contains("refresh_token")
+                || trimmed.contains("eyJ")
+                || trimmed.contains("\n\tat ")
+                || trimmed.contains("Exception:")) {
+            return fallback;
+        }
+        return trimmed;
+    }
+
     private static String extractError(String body, String fallback) {
         if (body == null || body.isBlank()) {
             return fallback;
@@ -564,10 +747,14 @@ public final class SupabaseAuthService implements AutoCloseable {
     }
 
     private static String requireEmail(String email) throws SupabaseAuthException {
-        if (email == null || email.isBlank() || !email.contains("@")) {
+        if (email == null || email.isBlank()) {
+            throw new SupabaseAuthException("Please enter your email address.");
+        }
+        String trimmed = email.trim();
+        if (!isValidEmail(trimmed)) {
             throw new SupabaseAuthException("Please enter a valid email address.");
         }
-        return email.trim();
+        return trimmed;
     }
 
     private static void requirePassword(String password) throws SupabaseAuthException {
@@ -581,6 +768,44 @@ public final class SupabaseAuthService implements AutoCloseable {
         if (!unmet.isEmpty()) {
             throw new SupabaseAuthException(PasswordPolicy.describe(unmet));
         }
+    }
+
+    private static String friendlyRecoveryVerifyError(int status, String body) {
+        if (status == 429) {
+            return sanitizeErrorMessage(
+                    extractError(body, null),
+                    "Too many verification attempts. Please wait a few minutes and try again.");
+        }
+        if (status >= 500) {
+            return "The authentication service is temporarily unavailable. Please try again later.";
+        }
+        return sanitizeErrorMessage(
+                extractError(body, null),
+                "Invalid or expired recovery code. Please check the code or request a new one.");
+    }
+
+    private static String friendlyPasswordUpdateError(int status, String body) {
+        if (status == 401 || status == 403) {
+            return "Your recovery session has expired. Please request a new recovery code and try again.";
+        }
+        if (status == 429) {
+            return sanitizeErrorMessage(
+                    extractError(body, null),
+                    "Too many requests. Please wait a few minutes and try again.");
+        }
+        if (status >= 500) {
+            return "The authentication service is temporarily unavailable. Please try again later.";
+        }
+        return sanitizeErrorMessage(
+                extractError(body, null),
+                "Unable to update password. Please check your password and try again.");
+    }
+
+    private static String requireRecoveryToken(String token) throws SupabaseAuthException {
+        if (token == null || token.isBlank()) {
+            throw new SupabaseAuthException("Please enter the recovery code from your email.");
+        }
+        return token.trim();
     }
 
     private static String requireOtpToken(String token) throws SupabaseAuthException {
