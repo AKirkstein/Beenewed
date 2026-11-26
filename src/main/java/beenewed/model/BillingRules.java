@@ -15,6 +15,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeFormatterBuilder;
 import java.time.format.DateTimeParseException;
 import java.time.format.TextStyle;
+import java.time.temporal.ChronoUnit;
 import java.time.temporal.IsoFields;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -117,6 +118,35 @@ public final class BillingRules {
                 && nextDueDate != null
                 && today != null
                 && nextDueDate.isBefore(today);
+    }
+
+    /** Formats the status-aware "Due" text shown in the Upcoming Renewals table and CSV export. */
+    public static String formatDueLabel(
+            Status status,
+            LocalDate nextDueDate,
+            LocalDate referenceDate,
+            boolean showOverdue) {
+        if (status == Status.PAUSED) {
+            return "On hold";
+        }
+        if (status == Status.CANCELLED) {
+            return "Inactive";
+        }
+        if (nextDueDate == null || referenceDate == null) {
+            return "";
+        }
+        long days = ChronoUnit.DAYS.between(referenceDate, nextDueDate);
+        if (days < 0) {
+            long past = -days;
+            if (!showOverdue) {
+                return past + (past == 1 ? " day ago" : " days ago");
+            }
+            return "Overdue " + past + (past == 1 ? " day" : " days");
+        }
+        if (days == 0) {
+            return "Due today";
+        }
+        return "In " + days + (days == 1 ? " day" : " days");
     }
 
     /** Formats a human-readable default renewal period label from a subscription's due date. */

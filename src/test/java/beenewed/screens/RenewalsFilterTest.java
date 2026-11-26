@@ -70,4 +70,27 @@ class RenewalsFilterTest {
                 List.of(first, identicalDup, differentDate), "All Statuses", "All Dates", today);
         assertEquals(List.of(first, differentDate), result);
     }
+
+    @Test
+    void filterPaymentsAppliesDateRangeStatusAndSearchQuery() {
+        LocalDate today = LocalDate.of(2026, 11, 23);
+        Subscription active = sub(1, "Netflix, Ultra", Status.ACTIVE, today.plusDays(5));
+        Subscription paused = sub(2, "Spotify", Status.PAUSED, today.plusDays(10));
+        Payment thisMonth = new Payment(1, active, LocalDate.of(2026, 11, 10), 549.00, "November 2026", "GCash", null);
+        Payment last30DaysPrevMonth = new Payment(2, paused, LocalDate.of(2026, 10, 28), 149.00, "October 2026", "Card", null);
+        Payment earlierThisYear = new Payment(3, active, LocalDate.of(2026, 3, 15), 549.00, "March 2026", "GCash", null);
+        Payment lastYear = new Payment(4, active, LocalDate.of(2025, 11, 1), 549.00, "November 2025", "GCash", null);
+        List<Payment> all = List.of(thisMonth, last30DaysPrevMonth, earlierThisYear, lastYear);
+
+        assertEquals(List.of(thisMonth),
+                RenewalsScreen.filterPayments(all, "This Month", "All Statuses", "", today));
+        assertEquals(List.of(thisMonth, last30DaysPrevMonth),
+                RenewalsScreen.filterPayments(all, "Last 30 Days", "All Statuses", "", today));
+        assertEquals(List.of(thisMonth, last30DaysPrevMonth, earlierThisYear),
+                RenewalsScreen.filterPayments(all, "This Year", "All Statuses", "", today));
+        assertEquals(List.of(last30DaysPrevMonth),
+                RenewalsScreen.filterPayments(all, "All Dates", "Paused", "", today));
+        assertEquals(List.of(thisMonth, earlierThisYear, lastYear),
+                RenewalsScreen.filterPayments(all, "All Dates", "All Statuses", "netflix", today));
+    }
 }

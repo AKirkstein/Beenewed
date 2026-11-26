@@ -1,5 +1,7 @@
 package beenewed.model;
 
+import beenewed.model.AnalyticsEngine.CategoryMetric;
+import beenewed.model.AnalyticsEngine.EfficiencyReport;
 import beenewed.model.AnalyticsEngine.UsageEfficiency;
 import beenewed.model.Models.Payment;
 import beenewed.model.Models.Subscription;
@@ -11,6 +13,7 @@ import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.function.Function;
 
@@ -102,6 +105,98 @@ public final class CsvExporter {
                             raw(money(dr.pendingAmount())),
                             raw(dr.status().label));
                 }
+            }
+        }
+        return sb.toString();
+    }
+
+    /** Exports Upcoming Renewals rows matching the RenewalsScreen DataTable schema. */
+    public static String exportUpcomingRenewals(
+            List<Subscription> subscriptions,
+            LocalDate referenceDate,
+            boolean showOverdue) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Subscription,Status,Billing Cycle,Next Renewal,Expected Amount (PHP),Due")
+                .append(CRLF);
+        if (subscriptions != null) {
+            for (Subscription s : subscriptions) {
+                if (s == null) continue;
+                String dueLabel = BillingRules.formatDueLabel(s.status, s.nextRenewal, referenceDate, showOverdue);
+                row(sb,
+                        text(s.name),
+                        raw(s.status == null ? "" : s.status.label),
+                        raw(s.cycle == null ? "" : s.cycle.label),
+                        raw(s.nextRenewal == null ? "" : s.nextRenewal.toString()),
+                        raw(money(s.price)),
+                        raw(dueLabel));
+            }
+        }
+        return sb.toString();
+    }
+
+    /** Exports Payment History rows matching the RenewalsScreen Payment History DataTable schema. */
+    public static String exportPaymentHistory(List<Payment> payments) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Subscription,Payment Date,Amount Paid (PHP),Renewal Period,Payment Method")
+                .append(CRLF);
+        if (payments != null) {
+            for (Payment p : payments) {
+                if (p == null || p.sub == null) continue;
+                String period = p.period == null || p.period.isBlank() ? "\u2014" : p.period;
+                String method = p.method == null || p.method.isBlank() ? "Not specified" : p.method;
+                row(sb,
+                        text(p.sub.name),
+                        raw(p.date == null ? "" : p.date.toString()),
+                        raw(money(p.amount)),
+                        text(period),
+                        text(method));
+            }
+        }
+        return sb.toString();
+    }
+
+    /** Exports a unified Reports & Analytics breakdown covering categories, recurring amounts, and usage efficiency. */
+    public static String exportReportsSummary(
+            List<CategoryMetric> categories,
+            EfficiencyReport efficiencyReport) {
+        StringBuilder sb = new StringBuilder();
+        row(sb, raw("Section"), raw("Category Breakdown"));
+        sb.append("Category,Active Subscriptions,Monthly Equivalent (PHP),Annual Equivalent (PHP),Share (%)")
+                .append(CRLF);
+        if (categories != null) {
+            for (CategoryMetric cm : categories) {
+                if (cm == null) continue;
+                String share = cm.sharePercent() == null ? "0.0%" : cm.sharePercent().toPlainString() + "%";
+                row(sb,
+                        text(cm.category()),
+                        raw(String.valueOf(cm.activeCount())),
+                        raw(money(cm.monthlyTotal())),
+                        raw(money(cm.annualTotal())),
+                        raw(share));
+            }
+        }
+        sb.append(CRLF);
+        row(sb, raw("Section"), raw("Recurring Spend & Usage Efficiency"));
+        sb.append("Subscription,Category,Status,Price (PHP),Billing Cycle,Monthly Equivalent (PHP),Annual Equivalent (PHP),Next Renewal Date,Uses (30d),Cost Per Day (PHP),Cost Per Use (PHP),Last Used,Utilization")
+                .append(CRLF);
+        if (efficiencyReport != null && efficiencyReport.rows() != null) {
+            for (UsageEfficiency row : efficiencyReport.rows()) {
+                if (row == null || row.subscription() == null) continue;
+                Subscription s = row.subscription();
+                row(sb,
+                        text(s.name),
+                        text(s.category),
+                        raw(s.status == null ? "" : s.status.label),
+                        raw(money(s.price)),
+                        raw(s.cycle == null ? "" : s.cycle.label),
+                        raw(money(row.monthlyCost())),
+                        raw(money(AnalyticsEngine.annualEquivalent(s))),
+                        raw(s.nextRenewal == null ? "" : s.nextRenewal.toString()),
+                        raw(String.valueOf(row.usesInWindow())),
+                        raw(money(row.costPerDay())),
+                        raw(row.costPerUse() == null ? "" : money(row.costPerUse())),
+                        raw(row.lastUsedDate() == null ? "Never" : row.lastUsedDate().toString()),
+                        raw(row.level() == null ? "" : row.level().label));
             }
         }
         return sb.toString();

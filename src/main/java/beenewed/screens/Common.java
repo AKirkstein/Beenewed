@@ -1,6 +1,7 @@
 package beenewed.screens;
 
 import beenewed.model.AnalyticsEngine;
+import beenewed.model.BillingRules;
 import beenewed.model.CsvExporter;
 import beenewed.model.Models.*;
 import beenewed.model.Store;
@@ -45,27 +46,25 @@ public final class Common {
 
     /** Evaluates due badge styling for explicit reminder lead days and overdue-highlight preference. */
     public static UI.Pill dueBadge(LocalDate d, int reminderWindowDays, boolean showOverdue) {
+        LocalDate today = Store.today();
         long days = Store.daysUntil(d);
+        String label = BillingRules.formatDueLabel(Status.ACTIVE, d, today, showOverdue);
         if (days < 0) {
             if (!showOverdue) {
-                String past = (-days) + (days == -1 ? " day ago" : " days ago");
-                return new UI.Pill(past, Theme.MUTED, Theme.SUBTLE, Theme.PLACEHOLDER, 999);
+                return new UI.Pill(label, Theme.MUTED, Theme.SUBTLE, Theme.PLACEHOLDER, 999);
             }
-            return UI.badge("Overdue " + (-days) + (days == -1 ? " day" : " days"), Theme.RED, Theme.RED_BG);
+            return UI.badge(label, Theme.RED, Theme.RED_BG);
         }
-        if (days == 0) return UI.badge("Due today", Theme.ORANGE, Theme.ORANGE_BG);
-        String t = "In " + days + (days == 1 ? " day" : " days");
-        if (days <= reminderWindowDays) return UI.badge(t, Theme.ORANGE, Theme.ORANGE_BG);
-        return new UI.Pill(t, Theme.MUTED, Theme.SUBTLE, Theme.PLACEHOLDER, 999);
+        if (days == 0) return UI.badge(label, Theme.ORANGE, Theme.ORANGE_BG);
+        if (days <= reminderWindowDays) return UI.badge(label, Theme.ORANGE, Theme.ORANGE_BG);
+        return new UI.Pill(label, Theme.MUTED, Theme.SUBTLE, Theme.PLACEHOLDER, 999);
     }
 
     /** Status-aware due badge: non-active subscriptions are never flagged as overdue. */
     public static UI.Pill dueBadge(Subscription s) {
-        if (s.status == Status.PAUSED) {
-            return new UI.Pill("On hold", Theme.MUTED, Theme.SUBTLE, Theme.PLACEHOLDER, 999);
-        }
-        if (s.status == Status.CANCELLED) {
-            return new UI.Pill("Inactive", Theme.MUTED, Theme.SUBTLE, Theme.PLACEHOLDER, 999);
+        if (s.status == Status.PAUSED || s.status == Status.CANCELLED) {
+            String label = BillingRules.formatDueLabel(s.status, s.nextRenewal, Store.today(), false);
+            return new UI.Pill(label, Theme.MUTED, Theme.SUBTLE, Theme.PLACEHOLDER, 999);
         }
         return dueBadge(s.nextRenewal);
     }
@@ -119,7 +118,7 @@ public final class Common {
             CsvExporter.writeUtf8(target.toPath(), csvContent);
             JOptionPane.showMessageDialog(
                     parent,
-                    "Exported CSV to:\n" + target.getAbsolutePath(),
+                    "CSV exported successfully!\n" + target.getAbsolutePath(),
                     "Export Complete",
                     JOptionPane.INFORMATION_MESSAGE);
         } catch (IOException error) {

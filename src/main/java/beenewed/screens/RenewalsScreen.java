@@ -2,6 +2,7 @@ package beenewed.screens;
 
 import beenewed.App;
 import beenewed.model.BillingRules;
+import beenewed.model.CsvExporter;
 import beenewed.model.Models.*;
 import beenewed.model.Store;
 import beenewed.ui.*;
@@ -74,10 +75,21 @@ public class RenewalsScreen extends JPanel {
     private JComponent upcomingCard() {
         Store st = Store.get();
         UI.RoundPanel card = UI.card(new BorderLayout(0, 16), 18);
+        UI.Btn exportCsv = UI.secondary("Export CSV", Icons.Type.SAVE);
+        exportCsv.setToolTipText("Export upcoming renewals to CSV");
+        exportCsv.addActionListener(e -> {
+            Store current = Store.get();
+            LocalDate refDate = Store.today();
+            List<Subscription> rows = filterRenewals(
+                    current.byRenewal(current.subscriptions), upStatus.selected(), dueFilter.selected(), refDate);
+            String csv = CsvExporter.exportUpcomingRenewals(rows, refDate, current.showOverdue);
+            Common.exportCsvWithDialog(this, "beenewed-upcoming-renewals-" + refDate + ".csv", csv);
+        });
         UI.Btn rem = UI.secondary("View Reminders", Icons.Type.BELL);
         rem.addActionListener(e -> App.get().showReminders());
         JPanel top = UI.vstack(14,
-                UI.split(Common.cardHeading(null, "Upcoming Renewals", "Review scheduled renewal dates and expected subscription charges."), rem),
+                UI.split(Common.cardHeading(null, "Upcoming Renewals", "Review scheduled renewal dates and expected subscription charges."),
+                        UI.hrow(8, exportCsv, rem)),
                 UI.hrow(18, labeled("Due Date:", dueFilter), labeled("Status:", upStatus), UI.hglue()));
         card.add(top, BorderLayout.NORTH);
 
@@ -134,6 +146,15 @@ public class RenewalsScreen extends JPanel {
     // ---------------------------------------------------------------- History
     private JComponent historyCard() {
         UI.RoundPanel card = UI.card(new BorderLayout(0, 16), 18);
+        UI.Btn exportCsv = UI.secondary("Export CSV", Icons.Type.SAVE);
+        exportCsv.setToolTipText("Export payment history to CSV");
+        exportCsv.addActionListener(e -> {
+            LocalDate refDate = Store.today();
+            List<Payment> rows = filterPayments(
+                    Store.get().paymentsNewestFirst(), payDate.selected(), payStatus.selected(), paySearch.getText(), refDate);
+            String csv = CsvExporter.exportPaymentHistory(rows);
+            Common.exportCsvWithDialog(this, "beenewed-payment-history-" + refDate + ".csv", csv);
+        });
         UI.Btn rec = UI.primary("Record Payment", Icons.Type.PLUS);
         rec.addActionListener(e -> App.get().recordPayment(null));
 
@@ -149,27 +170,41 @@ public class RenewalsScreen extends JPanel {
         JPanel filters = UI.hrow(18, labeled("Payment Date:", payDate), labeled("Subscription Status:", payStatus), searchWrap);
         card.add(UI.vstack(14, UI.split(
                 Common.cardHeading(null, "Payment History", "Read-only ledger of recorded payments across your subscriptions."),
-                rec), filters), BorderLayout.NORTH);
+                UI.hrow(8, exportCsv, rec)), filters), BorderLayout.NORTH);
         payTableHolder = UI.clear(new BorderLayout());
         payTableHolder.add(historyTable());
         card.add(payTableHolder, BorderLayout.CENTER);
         return card;
     }
 
-    private JComponent historyTable() {
-        LocalDate today = Store.today();
-        String range = payDate.selected(), status = payStatus.selected();
-        String q = paySearch.getText().trim().toLowerCase();
-        List<Payment> list = Store.get().paymentsNewestFirst().stream()
-                .filter(p -> switch (range == null ? "" : range) {
-                    case "This Month" -> p.date.getYear() == today.getYear() && p.date.getMonth() == today.getMonth();
-                    case "Last 30 Days" -> !p.date.isBefore(today.minusDays(30)) && !p.date.isAfter(today);
-                    case "This Year" -> p.date.getYear() == today.getYear();
+    /** Filters payments for the Payment History table and its CSV export. */
+    static List<Payment> filterPayments(
+            List<Payment> orderedPayments,
+            String rangeFilter,
+            String statusFilter,
+            String searchQuery,
+            LocalDate referenceDate) {
+        String q = searchQuery == null ? "" : searchQuery.trim().toLowerCase();
+        return orderedPayments.stream()
+                .filter(p -> p != null && p.sub != null)
+                .filter(p -> switch (rangeFilter == null ? "" : rangeFilter) {
+                    case "This Month" -> p.date != null
+                            && p.date.getYear() == referenceDate.getYear()
+                            && p.date.getMonth() == referenceDate.getMonth();
+                    case "Last 30 Days" -> p.date != null
+                            && !p.date.isBefore(referenceDate.minusDays(30))
+                            && !p.date.isAfter(referenceDate);
+                    case "This Year" -> p.date != null && p.date.getYear() == referenceDate.getYear();
                     default -> true;
                 })
-                .filter(p -> status == null || status.startsWith("All") || p.sub.status.label.equals(status))
+                .filter(p -> statusFilter == null || statusFilter.startsWith("All") || p.sub.status.label.equals(statusFilter))
                 .filter(p -> q.isEmpty() || p.sub.name.toLowerCase().contains(q))
                 .collect(Collectors.toList());
+    }
+
+    private JComponent historyTable() {
+        List<Payment> list = filterPayments(
+                Store.get().paymentsNewestFirst(), payDate.selected(), payStatus.selected(), paySearch.getText(), Store.today());
         DataTable t = new DataTable(new String[]{"Subscription", "Payment Date", "Amount Paid", "Renewal Period", "Payment Method", "Actions"},
                 new float[]{2.3f, 1.6f, 1.4f, 1.4f, 1.7f, 1.0f},
                 new int[]{DataTable.L, DataTable.L, DataTable.R, DataTable.L, DataTable.L, DataTable.R}, true);
